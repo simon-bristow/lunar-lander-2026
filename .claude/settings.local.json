@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx --version)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(npm install:*)",
+      "Bash(export NVM_DIR=\"$HOME/.nvm\")",
+      "Bash(source:*)",
+      "Bash(nvm use:*)",
+      "Bash(node --check:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(lsof:*)",
+      "Bash(xargs:*)",
+      "Bash(pkill:*)",
+      "Bash(node -e:*)"
+    ]
+  }
+}

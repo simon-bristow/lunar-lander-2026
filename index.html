@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Lunar Lander 2026</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -21,9 +22,28 @@
       text-align: center;
       letter-spacing: 0.03em;
     }
+    #android-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #111;
+      color: #fff;
+      font: bold 20px monospace;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 32px;
+      z-index: 999;
+    }
+    #android-overlay p { margin-top: 16px; font-size: 14px; color: #888; font-weight: normal; }
   </style>
 </head>
 <body>
+<div id="android-overlay">
+  🚀 Lunar Lander 2026
+  <p>Android is not supported yet.<br>Please play on a desktop or iOS device.</p>
+</div>
 <canvas id="canvas" width="900" height="600"></canvas>
 <div id="controls">
   Arrow keys / WASD: rotate &nbsp;|&nbsp; Up / W / Space: thrust &nbsp;|&nbsp; P / Esc: pause &nbsp;|&nbsp; R: restart
@@ -522,6 +542,21 @@ let ufo = {
 let ufoCollisionCooldown = 0;
 
 // ================================================================
+// PLATFORM DETECTION
+// ================================================================
+const ua = navigator.userAgent;
+const isIOS     = /iPhone|iPad|iPod/.test(ua) && !window.MSStream;
+const isAndroid = /Android/.test(ua);
+const isMobile  = isIOS || isAndroid;
+
+if (isAndroid) {
+  document.getElementById('android-overlay').style.display = 'flex';
+}
+if (isMobile) {
+  document.getElementById('controls').style.display = 'none';
+}
+
+// ================================================================
 // INPUT  (SPEC-02)
 // ================================================================
 const inp = { thrust: false, rotL: false, rotR: false };
@@ -626,6 +661,37 @@ window.addEventListener('keyup', e => {
   if (e.code === 'ArrowLeft'  || e.code === 'KeyA') inp.rotL   = false;
   if (e.code === 'ArrowRight' || e.code === 'KeyD') inp.rotR   = false;
 });
+
+// iOS tilt controls via DeviceOrientation
+// gamma = left/right tilt (-90..90), beta = forward/back tilt (-180..180)
+const TILT_DEAD   = 8;   // degrees dead zone
+const TILT_THRUST = 25;  // beta threshold to fire thrust (lean forward)
+
+if (isIOS) {
+  // iOS 13+ requires permission
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    // Show a tap-to-enable prompt on first interaction
+    const grantTilt = () => {
+      DeviceOrientationEvent.requestPermission().then(state => {
+        if (state === 'granted') window.addEventListener('deviceorientation', handleTilt);
+      }).catch(() => {});
+      document.removeEventListener('touchstart', grantTilt);
+    };
+    document.addEventListener('touchstart', grantTilt, { once: true });
+  } else {
+    window.addEventListener('deviceorientation', handleTilt);
+  }
+}
+
+function handleTilt(e) {
+  if (gState !== 'FLYING') return;
+  const gamma = e.gamma || 0;  // left(-) / right(+)
+  const beta  = e.beta  || 0;  // forward tilt increases beta
+  inp.rotL   = gamma < -TILT_DEAD;
+  inp.rotR   = gamma >  TILT_DEAD;
+  inp.thrust = beta  >  TILT_THRUST;
+}
 
 function clearFlight() { inp.thrust = false; inp.rotL = false; inp.rotR = false; }
 

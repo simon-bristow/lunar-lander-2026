@@ -715,11 +715,11 @@ canvas.addEventListener('click', e => _hitTest(e));
 // iOS ON-SCREEN BUTTONS  (FLYING state only)
 // Three zones at the bottom of the canvas — supports multi-touch.
 // ================================================================
-const BTN_Y = CH - 88;
+const BTN_Y = CH - 110;
 const BTNS = isIOS ? {
-  rotL:   { x: 0,   y: BTN_Y, w: 300, h: 88 },
-  thrust: { x: 300, y: BTN_Y, w: 300, h: 88 },
-  rotR:   { x: 600, y: BTN_Y, w: 300, h: 88 },
+  rotL:   { x: 0,   y: BTN_Y, w: 300, h: 110 },
+  thrust: { x: 300, y: BTN_Y, w: 300, h: 110 },
+  rotR:   { x: 600, y: BTN_Y, w: 300, h: 110 },
 } : null;
 
 const _activeTouches = new Map(); // touchId → 'rotL'|'thrust'|'rotR'
@@ -784,18 +784,22 @@ function drawTouchButtons() {
   const labels = { rotL: 'ROTATE', thrust: 'THRUST', rotR: 'ROTATE' };
   for (const [name, b] of Object.entries(BTNS)) {
     const active = inp[name];
-    ctx.fillStyle   = active ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.08)';
-    ctx.strokeStyle = active ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.18)';
-    ctx.lineWidth   = 1;
-    ctx.fillRect  (b.x, b.y, b.w, b.h);
-    ctx.strokeRect(b.x, b.y, b.w, b.h);
+    // Background — dark base so icons always read clearly
+    ctx.fillStyle = active ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.55)';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    // Border
+    ctx.strokeStyle = active ? '#FFFFFF' : 'rgba(255,255,255,0.55)';
+    ctx.lineWidth   = active ? 2 : 1.5;
+    ctx.strokeRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
+    // Icon
     const cx = b.x + b.w / 2;
-    ctx.fillStyle = active ? '#FFFFFF' : 'rgba(255,255,255,0.45)';
-    ctx.font = 'bold 28px monospace';
-    ctx.fillText(icons[name], cx, b.y + 44);
-    ctx.font = '10px monospace';
-    ctx.fillStyle = active ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.25)';
-    ctx.fillText(labels[name], cx, b.y + 62);
+    ctx.fillStyle = active ? '#FFFFFF' : 'rgba(255,255,255,0.80)';
+    ctx.font = `bold 36px monospace`;
+    ctx.fillText(icons[name], cx, b.y + 56);
+    // Label
+    ctx.font = '11px monospace';
+    ctx.fillStyle = active ? '#FFFFFF' : 'rgba(255,255,255,0.55)';
+    ctx.fillText(labels[name], cx, b.y + 80);
   }
   ctx.textAlign = 'left';
 }

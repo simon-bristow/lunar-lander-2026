@@ -468,7 +468,7 @@ function saveProgress(id, stars, fuelPct) {
   if (stars   > savedStars(id)) localStorage.setItem(`ll_${id}_stars`, stars);
   if (fuelPct > savedFuel(id))  localStorage.setItem(`ll_${id}_fuel`,  fuelPct);
 }
-function isUnlocked(id)    { return id === 1 || savedStars(id - 1) > 0; }
+function isUnlocked(id)    { return true; }
 function totalSavedStars() { return LEVELS.reduce((s, l) => s + savedStars(l.id), 0); }
 function maxStars()        { return LEVELS.length * 3; }
 
@@ -590,12 +590,13 @@ window.addEventListener('keydown', e => {
     }
 
   } else if (gState === 'MAIN_MENU') {
-    if (e.code === 'ArrowUp')   menuSel = (menuSel + 2) % 3;
-    if (e.code === 'ArrowDown') menuSel = (menuSel + 1) % 3;
+    if (e.code === 'ArrowUp')   menuSel = (menuSel + 3) % 4;
+    if (e.code === 'ArrowDown') menuSel = (menuSel + 1) % 4;
     if (e.code === 'Enter' || e.code === 'Space') {
       if      (menuSel === 0) { initShip(); fadeTransition(0.3, () => { gState = 'FLYING'; }); }
-      else if (menuSel === 1) { gState = 'HOW_TO_PLAY'; menuSel = 0; }
-      else if (menuSel === 2) { gState = 'HOW_TO_PLAY'; menuSel = 0; } // Credits → How to Play for now
+      else if (menuSel === 1) { gState = 'LEVEL_SELECT'; menuSel = 0; }
+      else if (menuSel === 2) { gState = 'HOW_TO_PLAY'; menuSel = 0; }
+      else if (menuSel === 3) { gState = 'HOW_TO_PLAY'; menuSel = 0; } // Credits → How to Play for now
     }
 
   } else if (gState === 'LEVEL_SELECT') {
@@ -1657,7 +1658,7 @@ function drawMainMenu() {
   ctx.font = '13px monospace'; ctx.fillStyle = '#FFB800';
   ctx.fillText(`★  ${ts} / ${ms}`, CW / 2, 240);
 
-  const items = ['PLAY', 'HOW TO PLAY', 'CREDITS'];
+  const items = ['PLAY', 'LEVEL SELECT', 'HOW TO PLAY', 'CREDITS'];
   items.forEach((item, i) => {
     const y   = 322 + i * 52;
     const sel = i === menuSel;
@@ -1706,7 +1707,7 @@ function drawLevelSelect() {
     ctx.lineWidth   = sel ? 2 : 1;
     ctx.strokeRect(cx, cy, cw, ch);
 
-    if (lev && isUnlocked(lev.id)) {
+    if (lev) {
       ctx.textAlign = 'left'; ctx.font = '10px monospace'; ctx.fillStyle = '#444444';
       ctx.fillText(String(lev.id), cx + 8, cy + 16);
 
@@ -1718,13 +1719,6 @@ function drawLevelSelect() {
       const stars = savedStars(lev.id);
       ctx.font = '22px sans-serif'; ctx.fillStyle = '#FFB800';
       ctx.fillText('★'.repeat(stars) + '☆'.repeat(3 - stars), cx + cw / 2, cy + 80);
-    } else {
-      // Locked or not yet implemented
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.fillRect(cx, cy, cw, ch);
-      ctx.font = '11px monospace'; ctx.fillStyle = '#2A2A2A';
-      ctx.fillText(String(i + 1), cx + cw / 2, cy + ch / 2 + 4);
     }
   }
 

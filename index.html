@@ -699,34 +699,42 @@ canvas.addEventListener('touchend', e => {
   _hitTest(e);
 }, { passive: false });
 
-// iOS tilt controls via DeviceOrientation
-// Axes depend on screen orientation:
-//   portrait  (0°)   → gamma = left/right tilt
-//   landscape (±90°) → beta  = left/right tilt (axes swap)
-const TILT_DEAD = 8;  // degrees dead zone
+// iOS tilt via DeviceMotion.accelerationIncludingGravity
+// Physical-frame axes: pick x or y based on screen orientation.
+//   portrait  ( 0°):  x = left(-) / right(+)
+//   landscape (90°):  y = left(+) / right(-) — negate
+//   landscape(-90°):  y = left(-) / right(+)
+const TILT_DEAD = 2.5;  // m/s² dead zone (~15° of tilt)
 
-function handleTilt(e) {
-  if (gState !== 'FLYING') return;
-  const angle = window.orientation || 0;  // 0=portrait, 90=landscape-CW, -90=landscape-CCW
+let _tiltReady = false;
+
+function _screenAngle() {
+  if (screen.orientation && screen.orientation.angle != null) return screen.orientation.angle;
+  return window.orientation || 0;
+}
+
+function _onMotion(e) {
+  if (gState !== 'FLYING' || !e.accelerationIncludingGravity) return;
+  const g     = e.accelerationIncludingGravity;
+  const angle = _screenAngle();
   let tilt;
-  if      (angle === 90)             tilt = -(e.beta  || 0);
-  else if (angle === -90 || angle === 270) tilt =  (e.beta  || 0);
-  else                               tilt =  (e.gamma || 0);
+  if      (angle === 90)               tilt = -(g.y || 0);
+  else if (angle === -90 || angle === 270) tilt =  (g.y || 0);
+  else                                 tilt =  (g.x || 0);
   inp.rotL = tilt < -TILT_DEAD;
   inp.rotR = tilt >  TILT_DEAD;
 }
 
-if (isIOS) {
-  // iOS 13+ requires an explicit permission prompt
-  if (typeof DeviceOrientationEvent !== 'undefined' &&
-      typeof DeviceOrientationEvent.requestPermission === 'function') {
-    document.addEventListener('touchstart', () => {
-      DeviceOrientationEvent.requestPermission()
-        .then(state => { if (state === 'granted') window.addEventListener('deviceorientation', handleTilt); })
-        .catch(() => {});
-    }, { once: true });
+function enableTilt() {
+  if (typeof DeviceMotionEvent !== 'undefined' &&
+      typeof DeviceMotionEvent.requestPermission === 'function') {
+    // iOS 13+ — must call from a user gesture
+    DeviceMotionEvent.requestPermission()
+      .then(s => { if (s === 'granted') { window.addEventListener('devicemotion', _onMotion); _tiltReady = true; } })
+      .catch(() => {});
   } else {
-    window.addEventListener('deviceorientation', handleTilt);
+    window.addEventListener('devicemotion', _onMotion);
+    _tiltReady = true;
   }
 }
 
@@ -1808,6 +1816,19 @@ function drawMainMenu() {
     const action = _mainActions[i];
     _hitboxes.push({ x: CW / 2 - 200, y: y - 38, w: 400, h: 52, action: () => { menuSel = i; action(); } });
   });
+
+  if (isIOS) {
+    const ty = 322 + 4 * 52 + 14;
+    ctx.font = '13px monospace';
+    if (_tiltReady) {
+      ctx.fillStyle = '#00FF88';
+      ctx.fillText('✓ TILT ACTIVE', CW / 2, ty);
+    } else {
+      ctx.fillStyle = '#666666';
+      ctx.fillText('TAP TO ENABLE TILT CONTROLS', CW / 2, ty);
+      _hitboxes.push({ x: CW / 2 - 200, y: ty - 22, w: 400, h: 32, action: enableTilt });
+    }
+  }
 
   ctx.font = '11px monospace'; ctx.fillStyle = '#2A2A2A';
   if (!isMobile) ctx.fillText('↑ ↓  navigate   Enter / Space  select', CW / 2, CH - 26);

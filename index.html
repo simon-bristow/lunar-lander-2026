@@ -13,14 +13,39 @@
       align-items: center;
       justify-content: center;
       min-height: 100vh;
+      overflow: hidden;
     }
-    canvas { display: block; }
+    /* Scale canvas to fill the viewport while preserving 3:2 ratio (900×600) */
+    canvas {
+      display: block;
+      width:  min(100vw, 150vh, 900px);
+      height: min(100vh, 66.6667vw, 600px);
+    }
     #controls {
       margin-top: 10px;
       color: #444;
       font: 12px monospace;
       text-align: center;
       letter-spacing: 0.03em;
+    }
+    /* Portrait-mode warning — shown on mobile only via JS class */
+    #portrait-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #111;
+      color: #fff;
+      font: bold 20px monospace;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 32px;
+      z-index: 1001;
+    }
+    #portrait-overlay p { margin-top: 16px; font: 14px monospace; color: #888; font-weight: normal; }
+    @media (orientation: portrait) {
+      body.mobile #portrait-overlay { display: flex; }
     }
     #android-overlay {
       display: none;
@@ -40,6 +65,10 @@
   </style>
 </head>
 <body>
+<div id="portrait-overlay">
+  ↺ Please rotate your device
+  <p>Lunar Lander 2026 must be played in landscape mode.</p>
+</div>
 <div id="android-overlay">
   🚀 Lunar Lander 2026
   <p>Android is not supported yet.<br>Please play on a desktop or iOS device.</p>
@@ -554,6 +583,7 @@ if (isAndroid) {
 }
 if (isMobile) {
   document.getElementById('controls').style.display = 'none';
+  document.body.classList.add('mobile');  // enables portrait-overlay via CSS media query
 }
 
 // ================================================================
@@ -685,11 +715,11 @@ canvas.addEventListener('click', e => _hitTest(e));
 // iOS ON-SCREEN BUTTONS  (FLYING state only)
 // Three zones at the bottom of the canvas — supports multi-touch.
 // ================================================================
-const BTN_Y = CH - 90;
+const BTN_Y = CH - 88;
 const BTNS = isIOS ? {
-  rotL:   { x: 10,  y: BTN_Y, w: 240, h: 80 },
-  thrust: { x: 330, y: BTN_Y, w: 240, h: 80 },
-  rotR:   { x: 650, y: BTN_Y, w: 240, h: 80 },
+  rotL:   { x: 0,   y: BTN_Y, w: 300, h: 88 },
+  thrust: { x: 300, y: BTN_Y, w: 300, h: 88 },
+  rotR:   { x: 600, y: BTN_Y, w: 300, h: 88 },
 } : null;
 
 const _activeTouches = new Map(); // touchId → 'rotL'|'thrust'|'rotR'
@@ -750,17 +780,22 @@ if (isIOS) {
 function drawTouchButtons() {
   if (!BTNS) return;
   ctx.textAlign = 'center';
+  const icons  = { rotL: '◄', thrust: '▲', rotR: '►' };
+  const labels = { rotL: 'ROTATE', thrust: 'THRUST', rotR: 'ROTATE' };
   for (const [name, b] of Object.entries(BTNS)) {
     const active = inp[name];
     ctx.fillStyle   = active ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.08)';
-    ctx.strokeStyle = active ? 'rgba(255,255,255,0.6)'  : 'rgba(255,255,255,0.2)';
-    ctx.lineWidth   = 1.5;
+    ctx.strokeStyle = active ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.18)';
+    ctx.lineWidth   = 1;
     ctx.fillRect  (b.x, b.y, b.w, b.h);
     ctx.strokeRect(b.x, b.y, b.w, b.h);
-    ctx.font      = 'bold 30px monospace';
+    const cx = b.x + b.w / 2;
     ctx.fillStyle = active ? '#FFFFFF' : 'rgba(255,255,255,0.45)';
-    const label   = name === 'rotL' ? '◄' : name === 'rotR' ? '►' : '▲';
-    ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 11);
+    ctx.font = 'bold 28px monospace';
+    ctx.fillText(icons[name], cx, b.y + 44);
+    ctx.font = '10px monospace';
+    ctx.fillStyle = active ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.25)';
+    ctx.fillText(labels[name], cx, b.y + 62);
   }
   ctx.textAlign = 'left';
 }

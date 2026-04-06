@@ -762,8 +762,10 @@ if (isIOS) {
   canvas.addEventListener('touchend', e => {
     e.preventDefault();
     if (gState === 'FLYING') {
+      const hadBtn = Array.from(e.changedTouches).some(t => _activeTouches.has(t.identifier));
       Array.from(e.changedTouches).forEach(t => _activeTouches.delete(t.identifier));
       _syncButtons();
+      if (!hadBtn) _hitTest(e);  // tap outside flight buttons → check overlay hitboxes (e.g. pause)
     } else {
       _hitTest(e);
     }
@@ -775,6 +777,47 @@ if (isIOS) {
   }, { passive: false });
 } else {
   canvas.addEventListener('touchend', e => { e.preventDefault(); _hitTest(e); }, { passive: false });
+}
+
+// ================================================================
+// MOBILE OVERLAY BUTTONS  (pause + fullscreen)
+// ================================================================
+let _toastMsg = '', _toastUntil = 0;
+function showToast(msg) { _toastMsg = msg; _toastUntil = performance.now() / 1000 + 3; }
+
+function toggleFullscreen() {
+  const el = document.documentElement;
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  } else if (el.requestFullscreen) {
+    el.requestFullscreen().catch(() => showToast('Tip: Add to Home Screen for fullscreen'));
+  } else if (el.webkitRequestFullscreen) {
+    el.webkitRequestFullscreen();
+  } else {
+    showToast('Tip: Add to Home Screen for fullscreen');
+  }
+}
+
+function drawToast(now) {
+  if (!_toastMsg || now > _toastUntil) return;
+  const a = Math.min(1, (_toastUntil - now) * 1.5);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = `rgba(0,0,0,${a * 0.85})`; ctx.fillRect(CW/2 - 210, CH/2 - 20, 420, 38);
+  ctx.strokeStyle = `rgba(255,255,255,${a * 0.3})`; ctx.lineWidth = 1; ctx.strokeRect(CW/2 - 210, CH/2 - 20, 420, 38);
+  ctx.fillStyle = `rgba(255,255,255,${a})`; ctx.font = '12px monospace';
+  ctx.fillText(_toastMsg, CW/2, CH/2 + 5); ctx.textAlign = 'left';
+}
+
+// Small square button drawn at top-right corner; registers its own hitbox.
+const _CBTN = { x: CW - 54, y: 8, w: 46, h: 46 };
+function drawMobileCornerBtn(icon, action) {
+  if (!isMobile) return;
+  const { x, y, w, h } = _CBTN;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1.5; ctx.strokeRect(x+1, y+1, w-2, h-2);
+  ctx.font = '20px monospace'; ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.textAlign = 'center';
+  ctx.fillText(icon, x + w/2, y + h/2 + 7); ctx.textAlign = 'left';
+  _hitboxes.push({ x, y, w, h, action });
 }
 
 function drawTouchButtons() {
@@ -1886,6 +1929,8 @@ function drawMainMenu() {
     _hitboxes.push({ x: CW / 2 - 200, y: y - 38, w: 400, h: 52, action: () => { menuSel = i; action(); } });
   });
 
+  drawMobileCornerBtn('⛶', toggleFullscreen);
+
   ctx.font = '11px monospace'; ctx.fillStyle = '#2A2A2A';
   if (!isMobile) ctx.fillText('↑ ↓  navigate   Enter / Space  select', CW / 2, CH - 26);
   ctx.textAlign = 'left';
@@ -2293,6 +2338,7 @@ function loop(t) {
   if (gState === 'SUCCESS_ANIMATION') _hitboxes = [{ x: 0, y: 0, w: CW, h: CH, action: skipAnimation }];
   if (gState === 'FLYING' || gState === 'PAUSED') drawHUD(now);
   if (gState === 'FLYING') drawTouchButtons();
+  if (gState === 'FLYING') drawMobileCornerBtn('⏸', () => { gState = 'PAUSED'; menuSel = 0; clearFlight(); });
   if (gState === 'CRASHED')      drawCrashMsg();
   if (gState === 'PAUSED')       drawPaused();
   if (gState === 'RESULTS')      { drawTerrain(); drawPads(now); drawDebris(); drawUFO(); drawShip(); drawResults(); }
@@ -2301,6 +2347,7 @@ function loop(t) {
   if (gState === 'LEVEL_SELECT') drawLevelSelect();
   if (gState === 'HOW_TO_PLAY')  drawHowToPlay();
 
+  drawToast(now);
   drawFade();  // always on top — handles transition overlays
 
   requestAnimationFrame(loop);

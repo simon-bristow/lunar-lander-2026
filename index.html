@@ -681,64 +681,94 @@ function _hitTest(e) {
 }
 canvas.addEventListener('click', e => _hitTest(e));
 
-// iOS: touchstart = thrust on, touchend = thrust off (during FLYING)
-// For menus, touchend falls through to _hitTest as before.
-canvas.addEventListener('touchstart', e => {
-  if (isIOS && gState === 'FLYING') {
-    inp.thrust = true;
+// ================================================================
+// iOS ON-SCREEN BUTTONS  (FLYING state only)
+// Three zones at the bottom of the canvas — supports multi-touch.
+// ================================================================
+const BTN_Y = CH - 90;
+const BTNS = isIOS ? {
+  rotL:   { x: 10,  y: BTN_Y, w: 240, h: 80 },
+  thrust: { x: 330, y: BTN_Y, w: 240, h: 80 },
+  rotR:   { x: 650, y: BTN_Y, w: 240, h: 80 },
+} : null;
+
+const _activeTouches = new Map(); // touchId → 'rotL'|'thrust'|'rotR'
+
+function _btnAt(cx, cy) {
+  if (!BTNS) return null;
+  for (const [name, b] of Object.entries(BTNS)) {
+    if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h) return name;
+  }
+  return null;
+}
+
+function _syncButtons() {
+  inp.rotL   = false; inp.rotR   = false; inp.thrust = false;
+  for (const btn of _activeTouches.values()) inp[btn] = true;
+}
+
+function _touchCanvasXY(touch) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (touch.clientX - rect.left) * (CW / rect.width),
+    y: (touch.clientY - rect.top)  * (CH / rect.height),
+  };
+}
+
+if (isIOS) {
+  canvas.addEventListener('touchstart', e => {
     e.preventDefault();
-  }
-}, { passive: false });
+    if (gState === 'FLYING') {
+      Array.from(e.changedTouches).forEach(t => {
+        const { x, y } = _touchCanvasXY(t);
+        const btn = _btnAt(x, y);
+        if (btn) { _activeTouches.set(t.identifier, btn); _syncButtons(); }
+      });
+    }
+  }, { passive: false });
 
-canvas.addEventListener('touchend', e => {
-  e.preventDefault();
-  if (isIOS && gState === 'FLYING') {
-    inp.thrust = false;
-    return;
-  }
-  _hitTest(e);
-}, { passive: false });
+  canvas.addEventListener('touchmove', e => { e.preventDefault(); }, { passive: false });
 
-// iOS tilt via DeviceMotion.accelerationIncludingGravity
-// Physical-frame axes: pick x or y based on screen orientation.
-//   portrait  ( 0°):  x = left(-) / right(+)
-//   landscape (90°):  y = left(+) / right(-) — negate
-//   landscape(-90°):  y = left(-) / right(+)
-const TILT_DEAD = 2.5;  // m/s² dead zone (~15° of tilt)
+  canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    if (gState === 'FLYING') {
+      Array.from(e.changedTouches).forEach(t => _activeTouches.delete(t.identifier));
+      _syncButtons();
+    } else {
+      _hitTest(e);
+    }
+  }, { passive: false });
 
-let _tiltReady = false;
-
-function _screenAngle() {
-  if (screen.orientation && screen.orientation.angle != null) return screen.orientation.angle;
-  return window.orientation || 0;
+  canvas.addEventListener('touchcancel', e => {
+    Array.from(e.changedTouches).forEach(t => _activeTouches.delete(t.identifier));
+    _syncButtons();
+  }, { passive: false });
+} else {
+  canvas.addEventListener('touchend', e => { e.preventDefault(); _hitTest(e); }, { passive: false });
 }
 
-function _onMotion(e) {
-  if (gState !== 'FLYING' || !e.accelerationIncludingGravity) return;
-  const g     = e.accelerationIncludingGravity;
-  const angle = _screenAngle();
-  let tilt;
-  if      (angle === 90)               tilt = -(g.y || 0);
-  else if (angle === -90 || angle === 270) tilt =  (g.y || 0);
-  else                                 tilt =  (g.x || 0);
-  inp.rotL = tilt < -TILT_DEAD;
-  inp.rotR = tilt >  TILT_DEAD;
-}
-
-function enableTilt() {
-  if (typeof DeviceMotionEvent !== 'undefined' &&
-      typeof DeviceMotionEvent.requestPermission === 'function') {
-    // iOS 13+ — must call from a user gesture
-    DeviceMotionEvent.requestPermission()
-      .then(s => { if (s === 'granted') { window.addEventListener('devicemotion', _onMotion); _tiltReady = true; } })
-      .catch(() => {});
-  } else {
-    window.addEventListener('devicemotion', _onMotion);
-    _tiltReady = true;
+function drawTouchButtons() {
+  if (!BTNS) return;
+  ctx.textAlign = 'center';
+  for (const [name, b] of Object.entries(BTNS)) {
+    const active = inp[name];
+    ctx.fillStyle   = active ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.08)';
+    ctx.strokeStyle = active ? 'rgba(255,255,255,0.6)'  : 'rgba(255,255,255,0.2)';
+    ctx.lineWidth   = 1.5;
+    ctx.fillRect  (b.x, b.y, b.w, b.h);
+    ctx.strokeRect(b.x, b.y, b.w, b.h);
+    ctx.font      = 'bold 30px monospace';
+    ctx.fillStyle = active ? '#FFFFFF' : 'rgba(255,255,255,0.45)';
+    const label   = name === 'rotL' ? '◄' : name === 'rotR' ? '►' : '▲';
+    ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 11);
   }
+  ctx.textAlign = 'left';
 }
 
-function clearFlight() { inp.thrust = false; inp.rotL = false; inp.rotR = false; }
+function clearFlight() {
+  inp.thrust = false; inp.rotL = false; inp.rotR = false;
+  _activeTouches.clear();
+}
 
 // ================================================================
 // TERRAIN HELPERS  (SPEC-06)
@@ -1817,19 +1847,6 @@ function drawMainMenu() {
     _hitboxes.push({ x: CW / 2 - 200, y: y - 38, w: 400, h: 52, action: () => { menuSel = i; action(); } });
   });
 
-  if (isIOS) {
-    const ty = 322 + 4 * 52 + 14;
-    ctx.font = '13px monospace';
-    if (_tiltReady) {
-      ctx.fillStyle = '#00FF88';
-      ctx.fillText('✓ TILT ACTIVE', CW / 2, ty);
-    } else {
-      ctx.fillStyle = '#666666';
-      ctx.fillText('TAP TO ENABLE TILT CONTROLS', CW / 2, ty);
-      _hitboxes.push({ x: CW / 2 - 200, y: ty - 22, w: 400, h: 32, action: enableTilt });
-    }
-  }
-
   ctx.font = '11px monospace'; ctx.fillStyle = '#2A2A2A';
   if (!isMobile) ctx.fillText('↑ ↓  navigate   Enter / Space  select', CW / 2, CH - 26);
   ctx.textAlign = 'left';
@@ -2236,6 +2253,7 @@ function loop(t) {
   if (gState === 'FLYING' || gState === 'CRASHED') _hitboxes = [];
   if (gState === 'SUCCESS_ANIMATION') _hitboxes = [{ x: 0, y: 0, w: CW, h: CH, action: skipAnimation }];
   if (gState === 'FLYING' || gState === 'PAUSED') drawHUD(now);
+  if (gState === 'FLYING') drawTouchButtons();
   if (gState === 'CRASHED')      drawCrashMsg();
   if (gState === 'PAUSED')       drawPaused();
   if (gState === 'RESULTS')      { drawTerrain(); drawPads(now); drawDebris(); drawUFO(); drawShip(); drawResults(); }

@@ -75,7 +75,7 @@
 </div>
 <canvas id="canvas" width="900" height="600"></canvas>
 <div id="controls">
-  Arrow keys / WASD: rotate &nbsp;|&nbsp; Up / W / Space: thrust &nbsp;|&nbsp; P / Esc: pause &nbsp;|&nbsp; R: restart
+  Arrow keys / WASD: rotate &nbsp;|&nbsp; Up / W / Space: thrust &nbsp;|&nbsp; P / Esc: pause &nbsp;|&nbsp; R: restart &nbsp;|&nbsp; M: mute
 </div>
 <script>
 // ================================================================
@@ -87,12 +87,12 @@ const MAX_DT         = 0.05;
 const MAX_SPEED      = 400;
 const BURN_RATE          = 60;
 const MAX_LAND_ANGLE     = 5;
-const STARTING_LIVES     = 3;
+const MAX_CRASHES        = 3;   // consecutive crashes on one level before Mission Failed
 const WIND_PARTICLE_MAX  = 30;   // SPEC-07 §3.2
 
 // UFO constants  (SPEC-08 §9)
-const UFO_W              = 48;
-const UFO_H              = 20;
+const UFO_W              = 24;   // half the SPEC-08 size
+const UFO_H              = 10;
 const UFO_BASE_RADIUS    = 160;
 const UFO_TRAIL_LENGTH   = 12;
 const UFO_MIN_Y          = 60;
@@ -103,30 +103,33 @@ const UFO_COLLISION_COOLDOWN = 1.5;    // seconds
 
 // Lander physical constants (SPEC-01 §4)
 const LANDER = {
-  width:         40,
-  height:        50,
-  legSpan:       52,
+  width:         20,
+  height:        25,
+  legSpan:       26,
+  footX:         10,   // landing-leg contact points (±footX, footY)
+  footY:         11,
   thrustPower:   18.0,
   rotationSpeed: 120,
   collPts: [
-    { x:   0, y: -22 },
-    { x:  18, y:  10 },
-    { x:  20, y:  22 },
-    { x: -20, y:  22 },
-    { x: -18, y:  10 },
+    { x:   0, y: -11 },
+    { x:   9, y:   5 },
+    { x:  10, y:  11 },
+    { x: -10, y:  11 },
+    { x:  -9, y:   5 },
   ],
 };
 // Pixels to inset the lander's AABB for debris/UFO collision checks.
 // The drawn body is narrower than the full width/height rectangle, so
 // shrinking by this amount removes the invisible dead-zone and makes
 // collisions feel tighter and more visually accurate.
-const AABB_INSET = 5;
+const AABB_INSET = 3;
 
 // ================================================================
 // SUCCESS ANIMATION CONSTANTS  (SPEC-09)
 // ================================================================
 const ASTRONAUT_H  = 30;  // px — total figure height
-const PLANT_OFFSET = 50;  // px right of lander centre
+const PLANT_OFFSET = 25;  // px right of lander centre
+const ARM_REACH    = 7;   // px between astronaut centre and flag pole (half-size arm)
 const LETTERBOX_H  = 48;  // px per bar (top and bottom)
 const ZOOM_TARGET  = 0.75;
 const ZOOM_DUR     = 1.5; // seconds to reach target zoom
@@ -162,7 +165,7 @@ const LEVEL_1 = {
   terrainEdgeColour: '#E0E0E0',
   background:        '#0A0E1A',
   landingPads: [
-    { id: 'pad_a', x: 330, width: 120, y: 480, active: true, beacon: true },
+    { id: 'pad_a', x: 360, width: 60, y: 480, active: true, beacon: true },
   ],
   debris: [],   // no debris on Moon (SPEC-07 §5.6)
   ufoEnabled: false,  // UFO present on Levels 7–12 only (SPEC-08 §2)
@@ -187,7 +190,7 @@ const LEVEL_2 = {
   ],
   terrainColour: '#C8C8C8', terrainEdgeColour: '#E0E0E0', background: '#0A0E1A',
   landingPads: [
-    { id: 'pad_a', x: 270, width: 100, y: 455, active: true, beacon: true },
+    { id: 'pad_a', x: 295, width: 50, y: 455, active: true, beacon: true },
   ],
   debris: [],
   ufoEnabled: false, ufoOrbitSpeed: 0,
@@ -211,18 +214,47 @@ const LEVEL_3 = {
   ],
   terrainColour: '#C8C8C8', terrainEdgeColour: '#E0E0E0', background: '#0A0E1A',
   landingPads: [
-    { id: 'pad_a', x: 630, width: 80, y: 445, active: true,  beacon: true  },
-    { id: 'pad_b', x: 248, width: 80, y: 445, active: false, beacon: false },
+    { id: 'pad_a', x: 650, width: 40, y: 445, active: true,  beacon: true  },
+  ],
+  debris: [],
+  ufoEnabled: false, ufoOrbitSpeed: 0,
+};
+
+// Cave levels (4th level of each planet): descend the open shaft on the
+// left, then fly sideways through the tunnel to the pad at the far end.
+// `ceiling` is the underside of the cave roof; everything above it is rock.
+const LEVEL_4 = {
+  id: 4, name: "Shackleton Lava Tube", environment: 'MOON',
+  gravity: 1.62, drag: 0, wind: 0,
+  gustEnabled: false, gustAmplitude: 0, gustFrequency: 0,
+  startingFuel: 900,
+  maxDescentSpeed: 60, maxLateralSpeed: 30,
+  spawnX: 85, spawnY: 150,  // below the HUD
+  terrain: [
+    { x:   0, y: 470 }, { x: 170, y: 470 }, { x: 250, y: 455 }, { x: 330, y: 470 },
+    { x: 410, y: 445 }, { x: 490, y: 460 }, { x: 570, y: 440 }, { x: 650, y: 455 },
+    { x: 720, y: 450 }, // pad zone
+    { x: 820, y: 450 },
+    { x: 860, y: 420 }, { x: 900, y: 340 },
+  ],
+  ceiling: [
+    { x: 170, y: -20 }, { x: 172, y: 340 }, { x: 250, y: 350 }, { x: 330, y: 365 },
+    { x: 410, y: 340 }, { x: 490, y: 355 }, { x: 570, y: 335 }, { x: 650, y: 350 },
+    { x: 720, y: 350 }, { x: 820, y: 345 }, { x: 900, y: 340 },
+  ],
+  terrainColour: '#C8C8C8', terrainEdgeColour: '#E0E0E0', background: '#0A0E1A',
+  landingPads: [
+    { id: 'pad_a', x: 745, width: 50, y: 450, active: true, beacon: false },
   ],
   debris: [],
   ufoEnabled: false, ufoOrbitSpeed: 0,
 };
 
 // ----------------------------------------------------------------
-// Levels 4–6  (Mars)
+// Levels 5–8  (Mars)
 // ----------------------------------------------------------------
-const LEVEL_4 = {
-  id: 4, name: "Hellas Planitia", environment: 'MARS',
+const LEVEL_5 = {
+  id: 5, name: "Hellas Planitia", environment: 'MARS',
   gravity: 3.72, drag: 0.0002, wind: +0.8,
   gustEnabled: false, gustAmplitude: 0, gustFrequency: 0,
   startingFuel: 800,
@@ -237,14 +269,14 @@ const LEVEL_4 = {
   terrainColour: '#B5451B', terrainEdgeColour: '#D4622A', background: '#1A0A06',
   windParticleColour: '#D4622A',
   landingPads: [
-    { id: 'pad_a', x: 350, width: 80, y: 450, active: true, beacon: true },
+    { id: 'pad_a', x: 370, width: 40, y: 450, active: true, beacon: true },
   ],
   debris: [],
   ufoEnabled: false, ufoOrbitSpeed: 0,
 };
 
-const LEVEL_5 = {
-  id: 5, name: "Valles Marineris", environment: 'MARS',
+const LEVEL_6 = {
+  id: 6, name: "Valles Marineris", environment: 'MARS',
   gravity: 3.72, drag: 0.0002, wind: -1.2,
   gustEnabled: true, gustAmplitude: 0.6, gustFrequency: 0.4,
   startingFuel: 800,
@@ -263,15 +295,14 @@ const LEVEL_5 = {
   terrainColour: '#B5451B', terrainEdgeColour: '#D4622A', background: '#1A0A06',
   windParticleColour: '#D4622A',
   landingPads: [
-    { id: 'pad_a', x: 368, width: 70, y: 460, active: true,  beacon: true  },
-    { id: 'pad_b', x: 538, width: 70, y: 455, active: false, beacon: false },
+    { id: 'pad_a', x: 385, width: 35, y: 460, active: true,  beacon: true  },
   ],
   debris: [],
   ufoEnabled: false, ufoOrbitSpeed: 0,
 };
 
-const LEVEL_6 = {
-  id: 6, name: "Olympus Approach", environment: 'MARS',
+const LEVEL_7 = {
+  id: 7, name: "Olympus Approach", environment: 'MARS',
   gravity: 3.72, drag: 0.0002, wind: +1.5,
   gustEnabled: true, gustAmplitude: 1.0, gustFrequency: 0.5,
   startingFuel: 750,
@@ -293,19 +324,46 @@ const LEVEL_6 = {
   terrainColour: '#B5451B', terrainEdgeColour: '#D4622A', background: '#1A0A06',
   windParticleColour: '#D4622A',
   landingPads: [
-    { id: 'pad_a', x: 450, width: 60, y: 390, active: true,  beacon: true  },
-    { id: 'pad_b', x: 240, width: 60, y: 480, active: false, beacon: false },
-    { id: 'pad_c', x: 760, width: 60, y: 460, active: false, beacon: false },
+    { id: 'pad_a', x: 465, width: 30, y: 390, active: true,  beacon: true  },
+  ],
+  debris: [],
+  ufoEnabled: false, ufoOrbitSpeed: 0,
+};
+
+const LEVEL_8 = {
+  id: 8, name: "Noctis Labyrinthus", environment: 'MARS',
+  gravity: 3.72, drag: 0.0002, wind: 0,
+  gustEnabled: false, gustAmplitude: 0, gustFrequency: 0,
+  startingFuel: 800,
+  maxDescentSpeed: 54, maxLateralSpeed: 24,
+  spawnX: 80, spawnY: 150,  // below the HUD
+  terrain: [
+    { x:   0, y: 500 }, { x: 160, y: 500 }, { x: 230, y: 470 }, { x: 300, y: 430 },
+    { x: 370, y: 450 }, { x: 440, y: 480 }, { x: 510, y: 470 }, { x: 580, y: 430 },
+    { x: 650, y: 440 },
+    { x: 700, y: 455 }, // pad zone
+    { x: 800, y: 455 },
+    { x: 850, y: 420 }, { x: 900, y: 330 },
+  ],
+  ceiling: [
+    { x: 160, y: -20 }, { x: 162, y: 380 }, { x: 230, y: 385 }, { x: 300, y: 345 },
+    { x: 370, y: 360 }, { x: 440, y: 395 }, { x: 510, y: 385 }, { x: 580, y: 345 },
+    { x: 650, y: 355 }, { x: 700, y: 370 }, { x: 800, y: 370 }, { x: 900, y: 330 },
+  ],
+  terrainColour: '#B5451B', terrainEdgeColour: '#D4622A', background: '#1A0A06',
+  windParticleColour: '#D4622A',
+  landingPads: [
+    { id: 'pad_a', x: 730, width: 40, y: 455, active: true, beacon: false },
   ],
   debris: [],
   ufoEnabled: false, ufoOrbitSpeed: 0,
 };
 
 // ----------------------------------------------------------------
-// Levels 7–9  (Titan)  — debris + UFO introduced
+// Levels 9–12  (Titan)  — debris + UFO introduced
 // ----------------------------------------------------------------
-const LEVEL_7 = {
-  id: 7, name: "Kraken Mare", environment: 'TITAN',
+const LEVEL_9 = {
+  id: 9, name: "Kraken Mare", environment: 'TITAN',
   gravity: 1.35, drag: 0.0008, wind: 0,
   gustEnabled: false, gustAmplitude: 0, gustFrequency: 0,
   startingFuel: 700,
@@ -319,7 +377,7 @@ const LEVEL_7 = {
   ],
   terrainColour: '#D4A843', terrainEdgeColour: '#E8C060', background: '#0D0D1A',
   landingPads: [
-    { id: 'pad_a', x: 318, width: 60, y: 475, active: true, beacon: true },
+    { id: 'pad_a', x: 333, width: 30, y: 475, active: true, beacon: true },
   ],
   debris: [
     { id: 'd1', type: 'rock',    x: 200, y: 320, w: 28, h: 22, drifts: false, driftMin:   0, driftMax:   0, driftSpeed:  0, driftDir: 1, colour: '#B07A28', rotation: 15 },
@@ -329,8 +387,8 @@ const LEVEL_7 = {
   ufoEnabled: true, ufoOrbitSpeed: 0.4,
 };
 
-const LEVEL_8 = {
-  id: 8, name: "Ligeia Shore", environment: 'TITAN',
+const LEVEL_10 = {
+  id: 10, name: "Ligeia Shore", environment: 'TITAN',
   gravity: 1.35, drag: 0.0008, wind: 0,
   gustEnabled: false, gustAmplitude: 0, gustFrequency: 0,
   startingFuel: 700,
@@ -347,8 +405,7 @@ const LEVEL_8 = {
   ],
   terrainColour: '#D4A843', terrainEdgeColour: '#E8C060', background: '#0D0D1A',
   landingPads: [
-    { id: 'pad_a', x: 548, width: 55, y: 390, active: true,  beacon: true  },
-    { id: 'pad_b', x: 298, width: 55, y: 430, active: false, beacon: false },
+    { id: 'pad_a', x: 561, width: 28, y: 390, active: true,  beacon: true  },
   ],
   debris: [
     { id: 'd1', type: 'rock',    x: 140, y: 300, w: 24, h: 20, drifts: false, driftMin:   0, driftMax:   0, driftSpeed:  0, driftDir: 1, colour: '#B07A28', rotation: 20 },
@@ -360,8 +417,8 @@ const LEVEL_8 = {
   ufoEnabled: true, ufoOrbitSpeed: 0.4,
 };
 
-const LEVEL_9 = {
-  id: 9, name: "Titan Rift", environment: 'TITAN',
+const LEVEL_11 = {
+  id: 11, name: "Titan Rift", environment: 'TITAN',
   gravity: 1.35, drag: 0.0008, wind: 0,
   gustEnabled: false, gustAmplitude: 0, gustFrequency: 0,
   startingFuel: 650,
@@ -379,8 +436,7 @@ const LEVEL_9 = {
   ],
   terrainColour: '#D4A843', terrainEdgeColour: '#E8C060', background: '#0D0D1A',
   landingPads: [
-    { id: 'pad_a', x: 455, width: 50, y: 365, active: true,  beacon: true  },
-    { id: 'pad_b', x: 247, width: 50, y: 415, active: false, beacon: false },
+    { id: 'pad_a', x: 467, width: 25, y: 365, active: true,  beacon: true  },
   ],
   debris: [
     { id: 'd1', type: 'rock',    x: 120, y: 320, w: 26, h: 22, drifts: false, driftMin:   0, driftMax:   0, driftSpeed:  0, driftDir: 1, colour: '#B07A28', rotation: 35 },
@@ -393,11 +449,40 @@ const LEVEL_9 = {
   ufoEnabled: true, ufoOrbitSpeed: 0.4,
 };
 
+const LEVEL_12 = {
+  id: 12, name: "Xanadu Caverns", environment: 'TITAN',
+  gravity: 1.35, drag: 0.0008, wind: 0,
+  gustEnabled: false, gustAmplitude: 0, gustFrequency: 0,
+  startingFuel: 750,
+  maxDescentSpeed: 48, maxLateralSpeed: 24,
+  spawnX: 75, spawnY: 150,  // below the HUD
+  terrain: [
+    { x:   0, y: 490 }, { x: 150, y: 490 }, { x: 220, y: 460 }, { x: 290, y: 470 },
+    { x: 350, y: 440 }, { x: 410, y: 470 }, { x: 470, y: 480 }, { x: 530, y: 450 },
+    { x: 590, y: 420 }, { x: 650, y: 450 },
+    { x: 700, y: 470 }, // pad zone
+    { x: 800, y: 470 },
+    { x: 850, y: 430 }, { x: 900, y: 340 },
+  ],
+  ceiling: [
+    { x: 150, y: -20 }, { x: 152, y: 390 }, { x: 220, y: 385 }, { x: 290, y: 395 },
+    { x: 350, y: 365 }, { x: 410, y: 395 }, { x: 470, y: 405 }, { x: 530, y: 375 },
+    { x: 590, y: 345 }, { x: 650, y: 375 }, { x: 700, y: 395 }, { x: 800, y: 395 },
+    { x: 900, y: 340 },
+  ],
+  terrainColour: '#D4A843', terrainEdgeColour: '#E8C060', background: '#0D0D1A',
+  landingPads: [
+    { id: 'pad_a', x: 734, width: 32, y: 470, active: true, beacon: false },
+  ],
+  debris: [],
+  ufoEnabled: false, ufoOrbitSpeed: 0,
+};
+
 // ----------------------------------------------------------------
-// Levels 10–12  (Io)  — wind + debris + UFO combined
+// Levels 13–16  (Io)  — wind + debris + UFO combined
 // ----------------------------------------------------------------
-const LEVEL_10 = {
-  id: 10, name: "Prometheus Plume", environment: 'IO',
+const LEVEL_13 = {
+  id: 13, name: "Prometheus Plume", environment: 'IO',
   gravity: 1.80, drag: 0.0001, wind: -2.0,
   gustEnabled: true, gustAmplitude: 1.5, gustFrequency: 0.6,
   startingFuel: 600,
@@ -415,8 +500,7 @@ const LEVEL_10 = {
   terrainColour: '#E8C840', terrainEdgeColour: '#F5D855', background: '#0A0E1A',
   windParticleColour: '#E8C840',
   landingPads: [
-    { id: 'pad_a', x: 258, width: 50, y: 450, active: true,  beacon: true  },
-    { id: 'pad_b', x: 648, width: 50, y: 455, active: false, beacon: false },
+    { id: 'pad_a', x: 270, width: 25, y: 450, active: true,  beacon: true  },
   ],
   debris: [
     { id: 'd1', type: 'rock',    x: 420, y: 300, w: 28, h: 24, drifts: false, driftMin:   0, driftMax:   0, driftSpeed:  0, driftDir: 1, colour: '#C8A030', rotation: 20 },
@@ -428,8 +512,8 @@ const LEVEL_10 = {
   ufoEnabled: true, ufoOrbitSpeed: 0.6,
 };
 
-const LEVEL_11 = {
-  id: 11, name: "Loki Patera", environment: 'IO',
+const LEVEL_14 = {
+  id: 14, name: "Loki Patera", environment: 'IO',
   gravity: 1.80, drag: 0.0001, wind: +2.5,
   gustEnabled: true, gustAmplitude: 2.0, gustFrequency: 0.7,
   startingFuel: 600,
@@ -448,8 +532,7 @@ const LEVEL_11 = {
   terrainColour: '#E8C840', terrainEdgeColour: '#F5D855', background: '#0A0E1A',
   windParticleColour: '#E8C840',
   landingPads: [
-    { id: 'pad_a', x: 637, width: 46, y: 460, active: true,  beacon: true  },
-    { id: 'pad_b', x: 216, width: 46, y: 480, active: false, beacon: false },
+    { id: 'pad_a', x: 648, width: 23, y: 460, active: true,  beacon: true  },
   ],
   debris: [
     { id: 'd1', type: 'rock',    x: 130, y: 360, w: 26, h: 22, drifts: false, driftMin:   0, driftMax:   0, driftSpeed:  0, driftDir: 1, colour: '#C8A030', rotation: 30 },
@@ -463,8 +546,8 @@ const LEVEL_11 = {
   ufoEnabled: true, ufoOrbitSpeed: 0.6,
 };
 
-const LEVEL_12 = {
-  id: 12, name: "Pele's Caldera", environment: 'IO',
+const LEVEL_15 = {
+  id: 15, name: "Pele's Caldera", environment: 'IO',
   gravity: 1.80, drag: 0.0001, wind: -3.0,
   gustEnabled: true, gustAmplitude: 2.5, gustFrequency: 0.8,
   startingFuel: 600,
@@ -485,9 +568,7 @@ const LEVEL_12 = {
   terrainColour: '#E8C840', terrainEdgeColour: '#F5D855', background: '#0A0E1A',
   windParticleColour: '#E8C840',
   landingPads: [
-    { id: 'pad_a', x: 594, width: 42, y: 420, active: true,  beacon: true  },
-    { id: 'pad_b', x: 224, width: 42, y: 440, active: false, beacon: false },
-    { id: 'pad_c', x: 854, width: 42, y: 430, active: false, beacon: false },
+    { id: 'pad_a', x: 604, width: 21, y: 420, active: true,  beacon: true  },
   ],
   debris: [
     { id: 'd1', type: 'rock',    x: 100, y: 370, w: 26, h: 22, drifts: false, driftMin:   0, driftMax:   0, driftSpeed:  0, driftDir: 1, colour: '#C8A030', rotation: 25 },
@@ -503,12 +584,59 @@ const LEVEL_12 = {
 };
 
 // Level registry  (SPEC-12)
+const LEVEL_16 = {
+  id: 16, name: "Tvashtar Tube", environment: 'IO',
+  gravity: 1.80, drag: 0.0001, wind: 0,
+  gustEnabled: false, gustAmplitude: 0, gustFrequency: 0,
+  startingFuel: 700,
+  maxDescentSpeed: 42, maxLateralSpeed: 18,
+  spawnX: 70, spawnY: 150,  // below the HUD
+  terrain: [
+    { x:   0, y: 480 }, { x: 140, y: 480 }, { x: 200, y: 450 }, { x: 260, y: 470 },
+    { x: 320, y: 500 }, { x: 380, y: 480 }, { x: 440, y: 440 }, { x: 500, y: 420 },
+    { x: 560, y: 440 }, { x: 620, y: 470 },
+    { x: 680, y: 480 }, // pad zone
+    { x: 800, y: 480 },
+    { x: 850, y: 440 }, { x: 900, y: 350 },
+  ],
+  ceiling: [
+    { x: 140, y: -20 }, { x: 142, y: 385 }, { x: 200, y: 385 }, { x: 260, y: 405 },
+    { x: 320, y: 435 }, { x: 380, y: 415 }, { x: 440, y: 375 }, { x: 500, y: 355 },
+    { x: 560, y: 375 }, { x: 620, y: 405 }, { x: 680, y: 415 }, { x: 800, y: 415 },
+    { x: 900, y: 350 },
+  ],
+  terrainColour: '#E8C840', terrainEdgeColour: '#F5D855', background: '#0A0E1A',
+  windParticleColour: '#E8C840',
+  landingPads: [
+    { id: 'pad_a', x: 726, width: 28, y: 480, active: true, beacon: false },
+  ],
+  debris: [],
+  ufoEnabled: false, ufoOrbitSpeed: 0,
+};
+
 const LEVELS = [
-  LEVEL_1, LEVEL_2,  LEVEL_3,
-  LEVEL_4, LEVEL_5,  LEVEL_6,
-  LEVEL_7, LEVEL_8,  LEVEL_9,
-  LEVEL_10, LEVEL_11, LEVEL_12,
+  LEVEL_1,  LEVEL_2,  LEVEL_3,  LEVEL_4,
+  LEVEL_5,  LEVEL_6,  LEVEL_7,  LEVEL_8,
+  LEVEL_9,  LEVEL_10, LEVEL_11, LEVEL_12,
+  LEVEL_13, LEVEL_14, LEVEL_15, LEVEL_16,
 ];
+
+// Saves made before the cave levels existed used ids 1–12. Shift them
+// to the new 16-level numbering once (old id n → n + floor((n-1)/3)).
+(function migrateSaves() {
+  try {
+    if (localStorage.getItem('ll_layout') === '16') return;
+    for (let n = 12; n >= 1; n--) {
+      const m = n + Math.floor((n - 1) / 3);
+      for (const k of ['stars', 'fuel']) {
+        const v = localStorage.getItem(`ll_${n}_${k}`);
+        localStorage.removeItem(`ll_${n}_${k}`);
+        if (v !== null) localStorage.setItem(`ll_${m}_${k}`, v);
+      }
+    }
+    localStorage.setItem('ll_layout', '16');
+  } catch (e) { /* storage unavailable — nothing to migrate */ }
+})();
 
 // localStorage helpers  (SPEC-10 §5, SPEC-11 §6)
 function savedStars(id)    { return parseInt(localStorage.getItem(`ll_${id}_stars`)  || '0'); }
@@ -533,9 +661,9 @@ const ctx    = canvas.getContext('2d');
 let level  = LEVEL_1;
 // States: 'MAIN_MENU' | 'LEVEL_SELECT' | 'HOW_TO_PLAY'
 //       | 'FLYING' | 'PAUSED' | 'CRASHED' | 'SUCCESS_ANIMATION'
-//       | 'RESULTS' | 'GAMEOVER'
+//       | 'RESULTS' | 'MISSION_FAILED'
 let gState = 'MAIN_MENU';
-let lives  = STARTING_LIVES;
+let crashStreak = 0;   // consecutive crashes on the current level
 
 let ship        = {};
 let particles   = [];
@@ -622,35 +750,19 @@ window.addEventListener('keydown', e => {
     if (e.code === 'Space' || e.code === 'Escape') skipAnimation();  // SPEC-09 §8
 
   } else if (gState === 'RESULTS') {
-    const hasNext   = level.id < LEVELS.length;
-    const itemCount = hasNext ? 3 : 2;
-    if (e.code === 'ArrowUp')   menuSel = (menuSel + itemCount - 1) % itemCount;
-    if (e.code === 'ArrowDown') menuSel = (menuSel + 1) % itemCount;
-    if (e.code === 'Enter' || e.code === 'Space' || e.code === 'KeyR') {
-      // R always targets Retry (idx 1 when next exists, idx 0 otherwise)
-      const idx = e.code === 'KeyR' ? (hasNext ? 1 : 0) : menuSel;
-      if (hasNext) {
-        if (idx === 0) {
-          // Next Level — advance to the next level entry
-          level = LEVELS[level.id];  // level.id is 1-based; LEVELS[level.id] = next level
-          _debrisSnap = (level.debris || []).map(d => d.x);
-          initShip();
-          fadeTransition(0.3, () => { gState = 'FLYING'; });
-        } else if (idx === 1) { initShip(); gState = 'FLYING'; }
-        else if  (idx === 2) { gState = 'LEVEL_SELECT'; menuSel = level.id - 1; }
-      } else {
-        if      (idx === 0) { initShip(); gState = 'FLYING'; }
-        else if (idx === 1) { gState = 'LEVEL_SELECT'; menuSel = level.id - 1; }
-      }
-    }
+    const items = resultsItems();
+    if (e.code === 'ArrowUp')   menuSel = (menuSel + items.length - 1) % items.length;
+    if (e.code === 'ArrowDown') menuSel = (menuSel + 1) % items.length;
+    if (e.code === 'Enter' || e.code === 'Space') items[menuSel].action();
+    if (e.code === 'KeyR') items.find(it => it.label === 'RETRY').action();
 
-  } else if (gState === 'GAMEOVER') {
+  } else if (gState === 'MISSION_FAILED') {
     if (e.code === 'ArrowUp')   menuSel = (menuSel + 2) % 3;
     if (e.code === 'ArrowDown') menuSel = (menuSel + 1) % 3;
     if (e.code === 'Enter' || e.code === 'Space' || e.code === 'KeyR') {
       const idx = e.code === 'KeyR' ? 0 : menuSel;
       if      (idx === 0) { restart(); }
-      else if (idx === 1) { gState = 'LEVEL_SELECT'; menuSel = 0; }
+      else if (idx === 1) { gState = 'LEVEL_SELECT'; menuSel = level.id - 1; }
       else if (idx === 2) { gState = 'MAIN_MENU';    menuSel = 0; }
     }
 
@@ -666,9 +778,9 @@ window.addEventListener('keydown', e => {
 
   } else if (gState === 'LEVEL_SELECT') {
     if (e.code === 'ArrowLeft')  menuSel = Math.max(0,  menuSel - 1);
-    if (e.code === 'ArrowRight') menuSel = Math.min(11, menuSel + 1);
+    if (e.code === 'ArrowRight') menuSel = Math.min(LEVELS.length - 1, menuSel + 1);
     if (e.code === 'ArrowUp')    menuSel = Math.max(0,  menuSel - 4);
-    if (e.code === 'ArrowDown')  menuSel = Math.min(11, menuSel + 4);
+    if (e.code === 'ArrowDown')  menuSel = Math.min(LEVELS.length - 1, menuSel + 4);
     if (e.code === 'Escape')     { gState = 'MAIN_MENU'; menuSel = 0; }
     if (e.code === 'Enter' || e.code === 'Space') {
       const sel = LEVELS[menuSel];
@@ -867,6 +979,16 @@ function terrainY(x) {
   return v0.y + (x - v0.x) / (v1.x - v0.x) * (v1.y - v0.y);
 }
 
+// Cave roof height at x, or -Infinity where there is no roof (open sky)
+function ceilingY(x) {
+  const c = level.ceiling;
+  if (!c || x < c[0].x || x > c[c.length - 1].x) return -Infinity;
+  let i = 0;
+  while (c[i + 1].x < x) i++;
+  const v0 = c[i], v1 = c[i + 1];
+  return v0.y + (x - v0.x) / (v1.x - v0.x) * (v1.y - v0.y);
+}
+
 function padAtX(x) {
   for (const p of level.landingPads)
     if (p.active && x >= p.x && x <= p.x + p.width) return p;
@@ -908,7 +1030,10 @@ function initBgStars() {
     });
 }
 
-function initShip() {
+// keepStreak: true only for the automatic respawn after a crash; starting or
+// restarting a level any other way begins a fresh crash count.
+function initShip(keepStreak = false) {
+  if (!keepStreak) crashStreak = 0;
   ship = {
     x: level.spawnX, y: level.spawnY,
     vx: 0, vy: 0, angle: 0,
@@ -929,7 +1054,6 @@ function initShip() {
 }
 
 function restart() {
-  lives  = STARTING_LIVES;
   gState = 'FLYING';
   menuSel = 0;
   initShip();
@@ -944,43 +1068,40 @@ function fadeTransition(dur, cb) {
 // ================================================================
 // PARTICLES
 // ================================================================
-function spawnThrust() {
-  const nozzle = worldPt({ x: 0, y: 28 }, ship.angle, ship.x, ship.y);
-  const exhRad = (ship.angle + 90) * Math.PI / 180;
-  for (let i = 0; i < 3; i++) {
-    const spread = (Math.random() - 0.5) * 0.8;
-    const speed  = 80 + Math.random() * 140;
-    const a      = exhRad + spread;
-    const life   = 0.12 + Math.random() * 0.18;
+// Asteroids-style break-up: each hull line flies off and spins, plus a few sparks
+function spawnCrash() {
+  for (const [a, b] of SHIP_LINES) {
+    const pa = worldPt({ x: a[0], y: a[1] }, ship.angle, ship.x, ship.y);
+    const pb = worldPt({ x: b[0], y: b[1] }, ship.angle, ship.x, ship.y);
+    const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
+    const out  = Math.atan2(my - ship.y, mx - ship.x) + (Math.random() - 0.5) * 0.6;
+    const spd  = 30 + Math.random() * 60;
+    const life = 1.2 + Math.random() * 0.4;
     particles.push({
-      x: nozzle.x + (Math.random() - 0.5) * 3,
-      y: nozzle.y + (Math.random() - 0.5) * 3,
-      vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
+      x: mx, y: my,
+      vx: Math.cos(out) * spd, vy: Math.sin(out) * spd - 20,
       life, maxLife: life,
-      r: 255, g: 110 + (Math.random() * 110 | 0), b: Math.random() * 30 | 0,
-      sz: 2 + Math.random() * 3, type: 'thrust',
+      hx: (pb.x - pa.x) / 2, hy: (pb.y - pa.y) / 2,
+      rot: 0, spin: (Math.random() - 0.5) * 6,
+      colour: SHIP_COLOUR, type: 'shard',
     });
   }
-}
-
-function spawnCrash() {
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 16; i++) {
     const a   = Math.random() * Math.PI * 2;
-    const spd = 50 + Math.random() * 240;
-    const life = 0.5 + Math.random() * 1.0;
+    const spd = 40 + Math.random() * 120;
+    const life = 0.5 + Math.random() * 0.8;
     particles.push({
       x: ship.x, y: ship.y,
-      vx: Math.cos(a) * spd, vy: Math.sin(a) * spd - 70,
+      vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
       life, maxLife: life,
-      r: 255, g: Math.random() * 160 | 0, b: 0,
-      sz: 2 + Math.random() * 6, type: 'crash',
+      colour: SHIP_COLOUR, sz: 2, type: 'spark',
     });
   }
 }
 
 // Grey dust kicked up by landing legs (SPEC-09 §3 SETTLE)
 function spawnSettleDust(padY) {
-  for (const lx of [ship.x - 22, ship.x + 22]) {
+  for (const lx of [ship.x - LANDER.footX, ship.x + LANDER.footX]) {
     for (let i = 0; i < 6; i++) {
       const a   = -Math.PI + Math.random() * Math.PI;
       const spd = 20 + Math.random() * 60;
@@ -1046,7 +1167,7 @@ function updateParticles(dt) {
     const p = particles[i];
     p.x += p.vx * dt;
     p.y += p.vy * dt;
-    if (p.type === 'crash') p.vy += 200 * dt;
+    if (p.type === 'shard') p.rot += p.spin * dt;
     if (p.type === 'dust')  p.vy += 40  * dt;
     // 'wind' particles have no gravity — they just drift
     p.life -= dt;
@@ -1076,10 +1197,12 @@ function doCrash(reason) {
   crashTimer = 0;
   clearFlight();
   spawnCrash();
+  sfxCrash();
 }
 
 function doLand(pad) {
   if (gState !== 'FLYING') return;
+  sfxLanding();
   // Snapshot captured BEFORE zeroing (SPEC-04 §6.1, SPEC-10 §2)
   const snap = {
     fuelPct: ship.fuel / ship.maxFuel,
@@ -1089,7 +1212,7 @@ function doLand(pad) {
   };
   ship.vx = 0; ship.vy = 0;
   ship.angle = 0;
-  ship.y = pad.y - 22;  // legs at pad.y
+  ship.y = pad.y - LANDER.footY;  // legs at pad.y
   clearFlight();
 
   // UFO success-animation behaviour  (SPEC-08 §7)
@@ -1107,10 +1230,11 @@ function doLand(pad) {
 
 function checkCollision() {
   const pts = LANDER.collPts.map(p => worldPt(p, ship.angle, ship.x, ship.y));
+  if (pts.some(pt => pt.y < ceilingY(pt.x))) { doCrash('CRASHED'); return; }
   for (const pt of pts) {
     if (pt.y < terrainY(pt.x)) continue;
-    const legL = worldPt({ x: -20, y: 22 }, ship.angle, ship.x, ship.y);
-    const legR = worldPt({ x:  20, y: 22 }, ship.angle, ship.x, ship.y);
+    const legL = worldPt({ x: -LANDER.footX, y: LANDER.footY }, ship.angle, ship.x, ship.y);
+    const legR = worldPt({ x:  LANDER.footX, y: LANDER.footY }, ship.angle, ship.x, ship.y);
     const padL = padAtX(legL.x);
     const padR = padAtX(legR.x);
     if (padL && padR && padL.id === padR.id) {
@@ -1154,7 +1278,6 @@ function updatePhysics(dt) {
     ship.vx += Math.cos(aRad) * LANDER.thrustPower * PPM * dt;
     ship.vy += Math.sin(aRad) * LANDER.thrustPower * PPM * dt;
     ship.fuel = Math.max(0, ship.fuel - BURN_RATE * dt);
-    spawnThrust();
   }
 
   ship.vy += level.gravity * PPM * dt;
@@ -1192,6 +1315,257 @@ function updatePhysics(dt) {
   if (ship.y < 0) { ship.y = 0; ship.vy = 0; }
 
   checkCollision();
+}
+
+// ================================================================
+// PROXIMITY WARNINGS  — ship outline pulse + sonar ping
+// ================================================================
+const WARN_DANGER_ALT = 80;  // px above ground where a too-fast descent warns
+const WARN_NEAR_DIST  = 15;  // px from rock that triggers the proximity warning
+const WARN = {
+  danger: { colour: [255,  64, 64], period: 0.40, freq: 1400, gain: 0.22, dur: 0.30 },
+  near:   { colour: [255, 160, 40], period: 0.90, freq:  800, gain: 0.07, dur: 0.50 },
+};
+let shipWarn  = null;  // null | 'danger' | 'near'
+let warnTimer = 0;     // seconds since the last ping
+
+// Distance from point to segment, plus the nearest point on the segment
+function segDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const t  = clamp(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy), 0, 1);
+  const nx = ax + t * dx, ny = ay + t * dy;
+  return { d: Math.hypot(px - nx, py - ny), x: nx, y: ny };
+}
+
+// Closest distance from the ship to rock (ground, walls, cave roof). Pad surfaces
+// don't count — being close to the pad is the point of landing.
+function rockDistance() {
+  const pts = LANDER.collPts.map(p => worldPt(p, ship.angle, ship.x, ship.y));
+  let min = Infinity;
+  for (const poly of [level.terrain, level.ceiling]) {
+    if (!poly) continue;
+    for (let i = 0; i < poly.length - 1; i++) {
+      const a = poly[i], b = poly[i + 1];
+      for (const pt of pts) {
+        const s = segDist(pt.x, pt.y, a.x, a.y, b.x, b.y);
+        const pad = padAtX(s.x);
+        if (pad && Math.abs(s.y - pad.y) < 1) continue;
+        min = Math.min(min, s.d);
+      }
+    }
+  }
+  return min;
+}
+
+function updateWarnings(dt) {
+  const alt = terrainY(ship.x) - (ship.y + LANDER.footY);
+  let w = null;
+  if (alt < WARN_DANGER_ALT && ship.vy > level.maxDescentSpeed) w = 'danger';
+  else if (rockDistance() < WARN_NEAR_DIST)                     w = 'near';
+
+  if (w !== shipWarn) {
+    shipWarn = w; warnTimer = 0;
+    if (w) playSonar(w);
+  } else if (w) {
+    warnTimer += dt;
+    if (warnTimer >= WARN[w].period) { warnTimer -= WARN[w].period; playSonar(w); }
+  }
+}
+
+// ================================================================
+// AUDIO  — everything is synthesised with Web Audio (no sample files).
+// The context can only start after a user gesture, so it's created lazily.
+// ================================================================
+let audioCtx   = null;
+let masterGain = null;   // all sound goes through here (M toggles mute)
+let noiseBuf   = null;   // 2 s of white noise, shared by every noisy effect
+let thrustGain = null;   // continuous engine rumble, faded in/out each frame
+let soundOn    = true;
+let radioTimer = 6;      // seconds until the next chatter / static burst
+
+function unlockAudio() {
+  try {
+    if (!audioCtx) {
+      audioCtx   = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = soundOn ? 1 : 0;
+      masterGain.connect(audioCtx.destination);
+
+      noiseBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+
+      // Thruster: looped noise through a low-pass, plus a faint 55 Hz square buzz
+      thrustGain = audioCtx.createGain();
+      thrustGain.gain.value = 0;
+      thrustGain.connect(masterGain);
+      const src = audioCtx.createBufferSource();
+      src.buffer = noiseBuf; src.loop = true;
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 500;
+      src.connect(lp).connect(thrustGain);
+      src.start();
+      const buzz = audioCtx.createOscillator();
+      const buzzAmp = audioCtx.createGain();
+      buzz.type = 'square'; buzz.frequency.value = 55; buzzAmp.gain.value = 0.04;
+      buzz.connect(buzzAmp).connect(thrustGain);
+      buzz.start();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch (e) { audioCtx = null; }
+}
+for (const ev of ['keydown', 'pointerdown', 'touchstart']) {
+  window.addEventListener(ev, unlockAudio, { passive: true });
+}
+window.addEventListener('keydown', e => {
+  if (e.code !== 'KeyM' || e.repeat) return;
+  soundOn = !soundOn;
+  if (masterGain) masterGain.gain.setTargetAtTime(soundOn ? 1 : 0, audioCtx.currentTime, 0.02);
+  showToast(soundOn ? 'SOUND ON' : 'SOUND OFF  (M to toggle)');
+});
+
+function audioReady() { return audioCtx && audioCtx.state === 'running'; }
+
+// Short enveloped oscillator note
+function tone(type, freq, t0, dur, gain, freqEnd) {
+  const osc = audioCtx.createOscillator();
+  const amp = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t0);
+  if (freqEnd) osc.frequency.exponentialRampToValueAtTime(freqEnd, t0 + dur);
+  amp.gain.setValueAtTime(0.0001, t0);
+  amp.gain.linearRampToValueAtTime(gain, t0 + 0.005);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(amp).connect(masterGain);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.02);
+  return osc;
+}
+
+// Noise burst through a filter whose cutoff sweeps fStart → fEnd
+function noiseBurst(t0, dur, gain, type, fStart, fEnd, q = 1) {
+  const src = audioCtx.createBufferSource();
+  src.buffer = noiseBuf;
+  src.playbackRate.value = 0.5 + Math.random();
+  const f = audioCtx.createBiquadFilter();
+  f.type = type; f.Q.value = q;
+  f.frequency.setValueAtTime(fStart, t0);
+  f.frequency.exponentialRampToValueAtTime(fEnd, t0 + dur);
+  const amp = audioCtx.createGain();
+  amp.gain.setValueAtTime(gain, t0);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  src.connect(f).connect(amp).connect(masterGain);
+  src.start(t0, Math.random());
+  src.stop(t0 + dur + 0.02);
+}
+
+// Called every frame: engine follows the thrust input, radio fires at random
+function updateAudio(dt) {
+  if (!audioReady()) return;
+  const firing = gState === 'FLYING' && inp.thrust && ship.fuel > 0;
+  thrustGain.gain.setTargetAtTime(firing ? 0.35 : 0, audioCtx.currentTime, firing ? 0.03 : 0.08);
+
+  if (gState !== 'FLYING') return;
+  radioTimer -= dt;
+  if (radioTimer <= 0) {
+    if (Math.random() < 0.6) sfxRadioChatter(); else sfxRadioStatic();
+    radioTimer = 7 + Math.random() * 12;
+  }
+}
+
+// Sonar ping: a sine blip gliding slightly down in pitch, with a fainter echo
+function playSonar(kind) {
+  if (!audioReady()) return;
+  const w = WARN[kind], t = audioCtx.currentTime;
+  tone('sine', w.freq, t,        w.dur, w.gain,       w.freq * 0.85);
+  tone('sine', w.freq, t + 0.12, w.dur, w.gain * 0.3, w.freq * 0.85);
+}
+
+// Explosion: a soft, muffled boom that swells in and rolls away over ~4 s,
+// with a deep thump underneath and a few faint crackles as it dies down
+function sfxCrash() {
+  if (!audioReady()) return;
+  const t = audioCtx.currentTime;
+  const DUR = 4;
+
+  const src = audioCtx.createBufferSource();
+  src.buffer = noiseBuf; src.loop = true;
+  const lp = audioCtx.createBiquadFilter();
+  lp.type = 'lowpass'; lp.Q.value = 0.5;
+  lp.frequency.setValueAtTime(1200, t);
+  lp.frequency.exponentialRampToValueAtTime(60, t + DUR);
+  const amp = audioCtx.createGain();
+  amp.gain.setValueAtTime(0.0001, t);
+  amp.gain.linearRampToValueAtTime(0.35, t + 0.08);        // soft attack, no hard click
+  amp.gain.exponentialRampToValueAtTime(0.0001, t + DUR);
+  src.connect(lp).connect(amp).connect(masterGain);
+  src.start(t);
+  src.stop(t + DUR + 0.05);
+
+  tone('sine', 90, t, 1.4, 0.25, 30);
+  for (let i = 0; i < 4; i++) {
+    noiseBurst(t + 0.3 + Math.random() * 1.8, 0.06, 0.05, 'bandpass', 1800, 900, 2);
+  }
+}
+
+// Landing: rising square-wave arpeggio resolving to a held major chord
+function sfxLanding() {
+  if (!audioReady()) return;
+  const t = audioCtx.currentTime;
+  [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone('square', f, t + i * 0.09, 0.12, 0.08));
+  [523.25, 659.25, 783.99].forEach(f => tone('triangle', f, t + 0.4, 1.2, 0.12));
+  tone('square', 1046.5, t + 0.4, 1.2, 0.05);
+}
+
+// Radio chatter: Quindar beep, squelch, garbled "voice" syllables, squelch, beep.
+// The voice is a buzzy sawtooth with jumping pitch, band-passed to radio range.
+function sfxRadioChatter() {
+  const t = audioCtx.currentTime;
+  tone('sine', 2525, t, 0.25, 0.05);                       // NASA-style intro tone
+  noiseBurst(t + 0.25, 0.12, 0.12, 'bandpass', 3000, 1500, 0.8);
+
+  const voice = audioCtx.createOscillator();
+  voice.type = 'sawtooth';
+  const bp = audioCtx.createBiquadFilter();
+  bp.type = 'bandpass'; bp.frequency.value = 1200; bp.Q.value = 1.2;
+  const crunch = audioCtx.createWaveShaper();
+  const curve = new Float32Array(256);
+  for (let i = 0; i < 256; i++) { const x = i / 128 - 1; curve[i] = Math.tanh(x * 4); }
+  crunch.curve = curve;
+  const amp = audioCtx.createGain();
+  amp.gain.value = 0;
+  voice.connect(bp).connect(crunch).connect(amp).connect(masterGain);
+
+  let s = t + 0.35;
+  const end = s + 1 + Math.random() * 1.5;
+  const base = 110 + Math.random() * 60;
+  while (s < end) {
+    const len = 0.06 + Math.random() * 0.14;
+    voice.frequency.setValueAtTime(base * (0.8 + Math.random() * 0.6), s);
+    bp.frequency.setValueAtTime(800 + Math.random() * 1400, s);
+    amp.gain.setValueAtTime(0, s);
+    amp.gain.linearRampToValueAtTime(0.05, s + 0.015);
+    amp.gain.linearRampToValueAtTime(0, s + len);
+    s += len + (Math.random() < 0.2 ? 0.15 : 0.02);
+  }
+  voice.start(t + 0.35);
+  voice.stop(s + 0.05);
+  noiseBurst(t + 0.35, s - t - 0.35, 0.02, 'bandpass', 2000, 2000, 0.7); // carrier hiss
+
+  noiseBurst(s, 0.15, 0.12, 'bandpass', 3000, 1500, 0.8);
+  tone('sine', 2475, s + 0.15, 0.25, 0.05);                // outro tone
+}
+
+// Radio static: a cluster of crackles and a short data blip
+function sfxRadioStatic() {
+  const t = audioCtx.currentTime;
+  const n = 4 + Math.floor(Math.random() * 6);
+  for (let i = 0; i < n; i++) {
+    noiseBurst(t + Math.random() * 0.8, 0.03 + Math.random() * 0.1, 0.06, 'bandpass', 2500, 1800, 2);
+  }
+  if (Math.random() < 0.5) {
+    for (let i = 0; i < 4; i++) tone('square', 1800 + Math.random() * 800, t + 0.9 + i * 0.07, 0.05, 0.025);
+  }
 }
 
 // ================================================================
@@ -1272,8 +1646,9 @@ function updateAnimation(dt) {
   const t   = clamp(anim.phaseElapsed / ph.dur, 0, 1); // normalised phase progress
   const lx  = anim.landX;
   const py  = anim.padY;
-  const gx  = lx + 18;             // ground position X (right side of lander)
+  const gx  = lx + 9;              // ground position X (right side of lander)
   const plx = lx + PLANT_OFFSET;   // flag plant X
+  const stX = plx - ARM_REACH;     // astronaut stands at arm's length from the pole
 
   // ---- Per-phase logic ----
   if (ph.name === 'SETTLE') {
@@ -1292,7 +1667,7 @@ function updateAnimation(dt) {
     anim.hatchAngle = -Math.PI / 2; // fully open
     anim.astVisible = true;
     // Astronaut lerps from hatch world position to ground beside lander
-    const hatchWorldY = anim.landY - 22; // top of lander body
+    const hatchWorldY = anim.landY - 11; // top of lander body
     anim.astX     = lerp(lx, gx, easeOut(t));
     anim.astFootY = lerp(hatchWorldY, py, easeOut(t));
   }
@@ -1302,12 +1677,12 @@ function updateAnimation(dt) {
     anim.armState   = 'down';
     // Moon gait: bouncy low-gravity float (SPEC-09 §5.3)
     const gait    = -Math.abs(Math.sin(t * Math.PI * 3)) * 8;
-    anim.astX     = lerp(gx, plx, t);
+    anim.astX     = lerp(gx, stX, t);
     anim.astFootY = py + gait;
   }
 
   if (ph.name === 'PLANT') {
-    anim.astX     = plx;
+    anim.astX     = stX;
     anim.astFootY = py;
     anim.armState = 'planting';
     // Flag unfurls in the first 60% of this phase (SPEC-09 §6)
@@ -1320,7 +1695,7 @@ function updateAnimation(dt) {
   }
 
   if (ph.name === 'HOLD') {
-    anim.astX     = plx;
+    anim.astX     = stX;
     anim.astFootY = py;
     anim.armState = 'salute'; // Moon: astronaut salutes (SPEC-09 §7.1)
     anim.flagUnfurl = 1;
@@ -1345,10 +1720,23 @@ function updateAnimation(dt) {
 // ================================================================
 // DRAW — WORLD ELEMENTS
 // ================================================================
+// Vector-arcade phosphor glow; call vectorGlow(null) to switch off
+function vectorGlow(col, blur = 10) {
+  ctx.shadowColor = col || 'transparent';
+  ctx.shadowBlur  = col ? blur : 0;
+}
+
+function strokeLines(lines) {
+  ctx.beginPath();
+  for (const [a, b] of lines) { ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
+  ctx.stroke();
+}
+
 function drawBackground() {
-  ctx.fillStyle = level.background;
+  ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, CW, CH);
   for (const s of bgStars) {
+    if (ceilingY(s.x) > -Infinity) continue;   // no sky inside or above a cave
     ctx.beginPath();
     ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
     ctx.fillStyle = `rgba(255,255,255,${s.a})`;
@@ -1357,32 +1745,70 @@ function drawBackground() {
 }
 
 // extend: extra world units added to bottom/sides so fill survives camera zoom
+// Glowing outline over a 25% tint of the level colour. The fill is laid on black
+// first so stars and particles behind rock stay hidden.
+// The outline is carried flat past both screen edges so it survives camera zoom-out.
 function drawTerrain(extend = 600) {
-  const t = level.terrain;
+  const t = level.terrain, last = t[t.length - 1];
+  const tracePath = () => {
+    ctx.moveTo(-extend, t[0].y);
+    for (const p of t) ctx.lineTo(p.x, p.y);
+    ctx.lineTo(CW + extend, last.y);
+  };
+  const fillRock = () => {
+    ctx.fillStyle = '#000000';
+    ctx.fill();
+    ctx.globalAlpha = 0.25;
+    ctx.fillStyle = level.terrainEdgeColour;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  };
   ctx.beginPath();
-  ctx.moveTo(t[0].x, t[0].y);
-  for (let i = 1; i < t.length; i++) ctx.lineTo(t[i].x, t[i].y);
+  tracePath();
   ctx.lineTo(CW + extend, CH + extend);
   ctx.lineTo(-extend, CH + extend);
   ctx.closePath();
-  ctx.fillStyle = level.terrainColour;
-  ctx.fill();
+  fillRock();
+
+  // Cave roof: rock fills from the ceiling line up and off the right edge
+  const c = level.ceiling;
+  const traceCeiling = () => {
+    ctx.moveTo(c[0].x, -extend);
+    for (const p of c) ctx.lineTo(p.x, p.y);
+    ctx.lineTo(CW + extend, c[c.length - 1].y);
+  };
+  if (c) {
+    ctx.beginPath();
+    traceCeiling();
+    ctx.lineTo(CW + extend, -extend);
+    ctx.closePath();
+    fillRock();
+  }
 
   ctx.beginPath();
-  ctx.moveTo(t[0].x, t[0].y);
-  for (let i = 1; i < t.length; i++) ctx.lineTo(t[i].x, t[i].y);
+  tracePath();
+  if (c) traceCeiling();
+
+  vectorGlow(level.terrainEdgeColour, 12);
   ctx.strokeStyle = level.terrainEdgeColour;
   ctx.lineWidth   = 2;
+  ctx.lineJoin    = 'round';
   ctx.stroke();
+  vectorGlow(null);
 }
 
 function drawPads(now) {
   for (const pad of level.landingPads) {
-    const col = pad.active ? '#00FF88' : '#FF4444';
-    ctx.fillStyle = col;
-    ctx.fillRect(pad.x, pad.y - 4, pad.width, 4);
-    ctx.fillRect(pad.x,               pad.y - 12, 3, 12);
-    ctx.fillRect(pad.x + pad.width - 3, pad.y - 12, 3, 12);
+    const col = pad.active ? '#30FF90' : '#FF4040';
+    vectorGlow(col, 10);
+    ctx.strokeStyle = col; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(pad.x, pad.y - 1); ctx.lineTo(pad.x + pad.width, pad.y - 1);
+    ctx.moveTo(pad.x, pad.y - 6); ctx.lineTo(pad.x + pad.width, pad.y - 6);
+    ctx.moveTo(pad.x + 1,             pad.y - 1); ctx.lineTo(pad.x + 1,             pad.y - 12);
+    ctx.moveTo(pad.x + pad.width - 1, pad.y - 1); ctx.lineTo(pad.x + pad.width - 1, pad.y - 12);
+    ctx.stroke();
+    vectorGlow(null);
 
     if (pad.active && pad.beacon && gState !== 'SUCCESS_ANIMATION') {
       const pulse = 0.5 + 0.5 * Math.sin(now * Math.PI * 3);
@@ -1401,74 +1827,57 @@ function drawPads(now) {
 }
 
 // yOffset: used during SETTLE to animate leg compression
+// Asteroids-style hull with strut legs. Nose and feet match LANDER.collPts.
+const SHIP_LINES = [
+  [[  0, -11], [  6,  7]], [[  0, -11], [ -6,  7]],   // hull sides
+  [[ -5,   4], [  5,  4]],                            // crossbar
+  [[3.5,   4], [ 10, 11]], [[-3.5,  4], [-10, 11]],   // legs
+  [[  8,  11], [ 13, 11]], [[ -8,  11], [-13, 11]],   // feet
+];
+const SHIP_COLOUR = '#FFFFFF';
+
+// yOffset: used during SETTLE to animate leg compression
 function drawShip(yOffset = 0) {
+  // Hull has shattered into 'shard' particles
+  if (gState === 'CRASHED' || gState === 'MISSION_FAILED') return;
   const x = ship.x;
   const y = ship.y + yOffset;
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(ship.angle * Math.PI / 180);
+  if (shipWarn) {
+    // Outline flares to the warning colour on each ping, then fades back to white
+    const w = WARN[shipWarn];
+    const k = 1 - warnTimer / w.period;
+    const [r, g, b] = w.colour.map(c => Math.round(255 + (c - 255) * k));
+    vectorGlow(`rgba(${w.colour.join(',')},0.9)`, 10 + 10 * k);
+    ctx.strokeStyle = `rgb(${r},${g},${b})`;
+  } else {
+    vectorGlow('rgba(200,220,255,0.9)', 10);
+    ctx.strokeStyle = SHIP_COLOUR;
+  }
+  ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+  strokeLines(SHIP_LINES);
 
-  if (inp.thrust && ship.fuel > 0 && gState === 'FLYING') {
-    const fh = 10 + Math.random() * 18;
-    const fw =  5 + Math.random() * 4;
-    const gr = ctx.createLinearGradient(0, 22, 0, 22 + fh);
-    gr.addColorStop(0,    'rgba(255,230,90,0.98)');
-    gr.addColorStop(0.35, 'rgba(255,110,20,0.85)');
-    gr.addColorStop(1,    'rgba(255,40,0,0)');
-    ctx.fillStyle = gr;
+  // Flickering V flame below the crossbar, as in Asteroids
+  if (inp.thrust && ship.fuel > 0 && gState === 'FLYING' && Math.random() > 0.25) {
+    const len = 11 + Math.random() * 4;
     ctx.beginPath();
-    ctx.moveTo(-fw / 2, 22);
-    ctx.lineTo( fw / 2, 22);
-    ctx.lineTo(0, 22 + fh);
-    ctx.closePath();
-    ctx.fill();
+    ctx.moveTo(-2.5, 4); ctx.lineTo(0, len); ctx.lineTo(2.5, 4);
+    ctx.stroke();
   }
 
-  ctx.strokeStyle = '#AAAAAA'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo( 11, 12); ctx.lineTo( 22, 22); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(-11, 12); ctx.lineTo(-22, 22); ctx.stroke();
-  ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.moveTo( 17, 22); ctx.lineTo( 27, 22); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(-17, 22); ctx.lineTo(-27, 22); ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(  0, -22);
-  ctx.lineTo( 13,   6);
-  ctx.lineTo( 10,  18);
-  ctx.lineTo(-10,  18);
-  ctx.lineTo(-13,   6);
-  ctx.closePath();
-  ctx.fillStyle   = '#E0E0E0';
-  ctx.fill();
-  ctx.strokeStyle = '#888888'; ctx.lineWidth = 1;
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.arc(0, -9, 5, 0, Math.PI * 2);
-  ctx.fillStyle   = '#2266AA';
-  ctx.fill();
-  ctx.strokeStyle = '#6699CC'; ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // Hatch panel (top of body) — only drawn during SUCCESS_ANIMATION
+  // Hatch — nose segment swings open, only during SUCCESS_ANIMATION
   if (anim) {
     ctx.save();
-    ctx.translate(-5, -20);              // hinge point at top-left of hatch
+    ctx.translate(-1.5, -6);             // hinge point on left hull side
     ctx.rotate(anim.hatchAngle);         // swings open to –π/2
-    ctx.fillStyle   = '#999999';
-    ctx.fillRect(0, 0, 10, 5);
-    ctx.strokeStyle = '#666666'; ctx.lineWidth = 0.5;
-    ctx.strokeRect(0, 0, 10, 5);
+    strokeLines([[[0, 0], [3, 0]]]);
     ctx.restore();
   }
 
-  ctx.beginPath();
-  ctx.moveTo(-6, 18); ctx.lineTo( 6, 18);
-  ctx.lineTo( 4, 28); ctx.lineTo(-4, 28);
-  ctx.closePath();
-  ctx.fillStyle = '#777777';
-  ctx.fill();
-
+  ctx.lineCap = 'butt';
+  vectorGlow(null);
   ctx.restore();
 }
 
@@ -1488,11 +1897,25 @@ function drawParticles() {
       ctx.lineTo(p.x - Math.sign(p.vx) * len, p.y);
       ctx.stroke();
       ctx.restore();
+    } else if (p.type === 'shard') {
+      const c = Math.cos(p.rot), s = Math.sin(p.rot);
+      const dx = p.hx * c - p.hy * s, dy = p.hx * s + p.hy * c;
+      ctx.save();
+      ctx.globalAlpha = a;
+      vectorGlow('rgba(200,220,255,0.9)', 10);
+      ctx.strokeStyle = p.colour; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+      strokeLines([[[p.x - dx, p.y - dy], [p.x + dx, p.y + dy]]]);
+      ctx.restore();
+    } else if (p.type === 'spark') {
+      ctx.globalAlpha = a;
+      ctx.fillStyle = p.colour;
+      ctx.fillRect(p.x - p.sz / 2, p.y - p.sz / 2, p.sz, p.sz);
+      ctx.globalAlpha = 1;
     } else {
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.sz * (0.2 + 0.8 * a), 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${p.r},${p.g},${p.b},${a})`;
-      ctx.fill();
+      ctx.globalAlpha = a;
+      ctx.fillStyle = `rgb(${p.r},${p.g},${p.b})`;
+      ctx.fillRect(p.x - p.sz / 2, p.y - p.sz / 2, p.sz, p.sz);
+      ctx.globalAlpha = 1;
     }
   }
 }
@@ -1504,25 +1927,21 @@ function drawParticles() {
 function drawAstronaut(ax, ay, armState) {
   ctx.save();
   ctx.translate(ax, ay);
+  ctx.scale(0.5, 0.5);                 // half size, to match the lander
+
+  vectorGlow('rgba(200,220,255,0.9)', 8);
+  ctx.strokeStyle = SHIP_COLOUR;
+  ctx.lineWidth   = 3.2;               // 1.6px on screen after scaling
+  ctx.lineCap     = 'round';
 
   // Legs (two simple lines from ground up)
-  ctx.strokeStyle = '#C8C8C8';
-  ctx.lineWidth   = 3;
-  ctx.lineCap     = 'round';
   ctx.beginPath(); ctx.moveTo(-3, 0); ctx.lineTo(-3, -10); ctx.stroke();
   ctx.beginPath(); ctx.moveTo( 3, 0); ctx.lineTo( 3, -10); ctx.stroke();
 
   // Body (spacesuit torso)
-  ctx.fillStyle   = '#D8D8D8';
-  ctx.strokeStyle = '#AAAAAA';
-  ctx.lineWidth   = 1;
-  ctx.beginPath();
-  ctx.rect(-7, -24, 14, 14);
-  ctx.fill();
-  ctx.stroke();
+  ctx.strokeRect(-7, -24, 14, 14);
 
   // Left arm (always hanging)
-  ctx.strokeStyle = '#C8C8C8'; ctx.lineWidth = 3;
   ctx.beginPath(); ctx.moveTo(-7, -20); ctx.lineTo(-13, -14); ctx.stroke();
 
   // Right arm — context-dependent
@@ -1530,7 +1949,7 @@ function drawAstronaut(ax, ay, armState) {
   if (armState === 'salute') {
     ctx.moveTo(7, -20); ctx.lineTo(14, -28); // arm raised for salute
   } else if (armState === 'planting') {
-    ctx.moveTo(7, -20); ctx.lineTo(10, -28); // arm extended downward/forward
+    ctx.moveTo(7, -20); ctx.lineTo(14, -22); // arm reaching out to the pole
   } else {
     ctx.moveTo(7, -20); ctx.lineTo(13, -14); // arm hanging
   }
@@ -1539,18 +1958,15 @@ function drawAstronaut(ax, ay, armState) {
   // Helmet (SPEC-09 §5 — "astronaut walks in bouncy low-gravity gait")
   ctx.beginPath();
   ctx.arc(0, -30, 9, 0, Math.PI * 2);
-  ctx.fillStyle   = '#E0E0EE';
-  ctx.fill();
-  ctx.strokeStyle = '#9999BB'; ctx.lineWidth = 1.5;
   ctx.stroke();
 
   // Visor
   ctx.beginPath();
   ctx.ellipse(0, -29, 5.5, 5, 0, 0.5, Math.PI - 0.5);
-  ctx.fillStyle = 'rgba(60,110,200,0.55)';
-  ctx.fill();
+  ctx.stroke();
 
   ctx.lineCap = 'butt'; // reset
+  vectorGlow(null);
   ctx.restore();
 }
 
@@ -1559,39 +1975,29 @@ function drawAstronaut(ax, ay, armState) {
 // ================================================================
 function drawFlag(px, py, unfurl) {
   // px, py = plant position at ground level (foot of pole)
-  const poleH = 36;
+  const poleH = 18;
 
   // Pole
-  ctx.strokeStyle = '#BBBBBB';
-  ctx.lineWidth   = 2;
+  vectorGlow('rgba(200,220,255,0.9)', 8);
+  ctx.strokeStyle = SHIP_COLOUR;
+  ctx.lineWidth   = 1.6;
   ctx.beginPath();
   ctx.moveTo(px, py - 2);
   ctx.lineTo(px, py - 2 - poleH);
   ctx.stroke();
 
-  if (unfurl <= 0) return;
+  if (unfurl > 0) {
+    const fw = Math.round(11 * unfurl);
+    const fh = 7;
+    const fy = py - 2 - poleH;
 
-  const fw = Math.round(22 * unfurl);
-  const fh = 14;
-  const fy = py - 2 - poleH;
-
-  // Flag field
-  ctx.fillStyle = '#E8E8FF';
-  ctx.fillRect(px, fy, fw, fh);
-
-  // Horizontal stripe
-  if (fw > 3) {
-    ctx.fillStyle = 'rgba(50,50,180,0.35)';
-    ctx.fillRect(px, fy + 5, fw, 4);
+    // Flag outline + stripe
+    ctx.strokeRect(px, fy, fw, fh);
+    if (fw > 2) {
+      ctx.beginPath(); ctx.moveTo(px, fy + 3.5); ctx.lineTo(px + fw, fy + 3.5); ctx.stroke();
+    }
   }
-
-  // Small star marker (appears as flag fully unfurls)
-  if (unfurl > 0.8 && fw > 8) {
-    ctx.fillStyle = 'rgba(50,50,180,0.55)';
-    ctx.beginPath();
-    ctx.arc(px + 6, fy + 4, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  vectorGlow(null);
 }
 
 // ================================================================
@@ -1610,10 +2016,10 @@ function drawSuccessAnimation(now) {
   ctx.scale(zoom, zoom);
   ctx.translate(-anim.landX, -anim.padY);
 
+  drawParticles();   // before terrain, so below-ground dust is hidden
   drawTerrain();
   drawPads(now);
   drawDebris();
-  drawParticles();
   drawUFO();
   drawShip(settleOff);
 
@@ -1661,18 +2067,18 @@ function drawHUD(now) {
   const pct = ship.fuel / ship.maxFuel;
 
   const bx = 16, by = 24, bw = 160, bh = 14;
-  ctx.font = '10px monospace'; ctx.fillStyle = '#666666'; ctx.textAlign = 'left';
+  ctx.font = '10px monospace'; ctx.fillStyle = level.terrainEdgeColour; ctx.textAlign = 'left';
   ctx.fillText('FUEL', bx, by - 5);
 
-  ctx.fillStyle = '#1A1A2E';
+  ctx.fillStyle = '#000000';
   ctx.fillRect(bx, by, bw, bh);
-  ctx.strokeStyle = '#333355'; ctx.lineWidth = 1;
+  ctx.strokeStyle = level.terrainEdgeColour; ctx.lineWidth = 1;
   ctx.strokeRect(bx, by, bw, bh);
 
   let fcol = '#00FF88';
   if      (pct < 0.25) fcol = (Math.floor(now * 4) % 2 === 0) ? '#FF4444' : null;
   else if (pct < 0.5)  fcol = '#FFB800';
-  if (fcol) { ctx.fillStyle = fcol; ctx.fillRect(bx, by, bw * pct, bh); }
+  if (fcol) { ctx.fillStyle = fcol; ctx.fillRect(bx + 2, by + 2, (bw - 4) * pct, bh - 4); }
 
   ctx.font = '12px monospace'; ctx.fillStyle = '#FFFFFF';
   ctx.fillText(Math.floor(ship.fuel), bx + bw + 8, by + 11);
@@ -1685,23 +2091,23 @@ function drawHUD(now) {
   const vxDir  = ship.vx >= 0 ? '→' : '←';
 
   ctx.font = '11px monospace';
-  ctx.fillStyle = '#555555'; ctx.fillText('VERT ', bx, by + 30);
+  ctx.fillStyle = level.terrainEdgeColour; ctx.fillText('VERT ', bx, by + 30);
   ctx.fillStyle = vyWarn ? '#FF4444' : '#CCCCCC';
   ctx.fillText(`${vyDir}${(vyAbs / PPM).toFixed(1)} m/s`, bx + 40, by + 30);
 
-  ctx.fillStyle = '#555555'; ctx.fillText('HORIZ', bx, by + 45);
+  ctx.fillStyle = level.terrainEdgeColour; ctx.fillText('HORIZ', bx, by + 45);
   ctx.fillStyle = vxWarn ? '#FF4444' : '#CCCCCC';
   ctx.fillText(`${vxDir}${(vxAbs / PPM).toFixed(1)} m/s`, bx + 40, by + 45);
 
   const botY   = ship.y + LANDER.height / 2;
   const altPx  = Math.max(0, terrainY(ship.x) - botY);
   const altWarn = altPx < 60 * PPM;
-  ctx.fillStyle = '#555555'; ctx.fillText('ALT  ', bx, by + 60);
+  ctx.fillStyle = level.terrainEdgeColour; ctx.fillText('ALT  ', bx, by + 60);
   ctx.fillStyle = altWarn ? '#FFB800' : '#CCCCCC';
   ctx.fillText(`${(altPx / PPM).toFixed(1)} m`, bx + 40, by + 60);
 
   const na = Math.abs(normAngle(ship.angle));
-  ctx.fillStyle = '#555555'; ctx.fillText('TILT ', bx, by + 75);
+  ctx.fillStyle = level.terrainEdgeColour; ctx.fillText('TILT ', bx, by + 75);
   ctx.fillStyle = na > 4 ? '#FF4444' : '#CCCCCC';
   ctx.fillText(na < 1 ? 'OK' : `${na.toFixed(1)}°`, bx + 40, by + 75);
 
@@ -1721,19 +2127,6 @@ function drawHUD(now) {
     ctx.textAlign = 'center'; ctx.font = '12px monospace'; ctx.fillStyle = '#88AACC';
     ctx.fillText(`${arrow} WIND ${str}`, CW / 2, 50);
     ctx.textAlign = 'left';
-  }
-
-  const pulse = 0.55 + 0.45 * Math.sin(now * Math.PI * 2);
-  ctx.textAlign = 'right'; ctx.font = '10px monospace';
-  ctx.fillStyle = '#555555'; ctx.fillText('LIVES', CW - 10, 18);
-  for (let i = 0; i < lives; i++) {
-    const lx = CW - 22 - i * 22, ly = 30;
-    ctx.fillStyle = lives === 1 ? `rgba(210,210,210,${pulse})` : '#D8D8D8';
-    ctx.beginPath();
-    ctx.moveTo(lx, ly - 6); ctx.lineTo(lx + 4, ly + 2);
-    ctx.lineTo(lx + 3, ly + 6); ctx.lineTo(lx - 3, ly + 6);
-    ctx.lineTo(lx - 4, ly + 2); ctx.closePath();
-    ctx.fill();
   }
 
   if (bannerTimer < 3.5) {
@@ -1796,6 +2189,23 @@ function drawPaused() {
 }
 
 // Results screen  (SPEC-11 §7, SPEC-10 §4)
+// Options on the level-complete screen, shared by keyboard and click/touch
+function resultsItems() {
+  const items = [];
+  if (level.id < LEVELS.length) items.push({ label: 'NEXT LEVEL', action: () => {
+    level = LEVELS[level.id];  // level.id is 1-based; LEVELS[level.id] = next level
+    _debrisSnap = (level.debris || []).map(d => d.x);
+    initShip();
+    fadeTransition(0.3, () => { gState = 'FLYING'; });
+  }});
+  items.push(
+    { label: 'RETRY',        action: () => { initShip(); gState = 'FLYING'; } },
+    { label: 'LEVEL SELECT', action: () => { gState = 'LEVEL_SELECT'; menuSel = level.id - 1; } },
+    { label: 'MAIN MENU',    action: () => { gState = 'MAIN_MENU';    menuSel = 0; } },
+  );
+  return items;
+}
+
 function drawResults() {
   if (!resultsData) return;
   const { snap, stars } = resultsData;
@@ -1827,10 +2237,7 @@ function drawResults() {
   }
 
   const hasNext = level.id < LEVELS.length;
-  const items   = hasNext
-    ? ['NEXT LEVEL', 'RETRY', 'LEVEL SELECT']
-    : ['RETRY', 'LEVEL SELECT'];
-
+  const items   = resultsItems();
   const firstItemY = CH / 2 + (hasNext ? 94 : 110);
   _hitboxes = [];
   items.forEach((item, i) => {
@@ -1839,18 +2246,8 @@ function drawResults() {
     const colour = sel ? (i === 0 && hasNext ? '#00FF88' : '#FFFFFF') : '#999999';
     ctx.font      = sel ? 'bold 18px monospace' : '17px monospace';
     ctx.fillStyle = colour;
-    ctx.fillText((sel ? '▶  ' : '   ') + item, CW / 2, y);
-    _hitboxes.push({ x: CW / 2 - 200, y: y - 28, w: 400, h: 38, action: () => {
-      menuSel = i;
-      if (hasNext) {
-        if      (i === 0) { level = LEVELS[level.id]; _debrisSnap = (level.debris||[]).map(d=>d.x); initShip(); fadeTransition(0.3, () => { gState = 'FLYING'; }); }
-        else if (i === 1) { initShip(); gState = 'FLYING'; }
-        else if (i === 2) { gState = 'LEVEL_SELECT'; menuSel = level.id - 1; }
-      } else {
-        if      (i === 0) { initShip(); gState = 'FLYING'; }
-        else if (i === 1) { gState = 'LEVEL_SELECT'; menuSel = level.id - 1; }
-      }
-    }});
+    ctx.fillText((sel ? '▶  ' : '   ') + item.label, CW / 2, y);
+    _hitboxes.push({ x: CW / 2 - 200, y: y - 28, w: 400, h: 38, action: () => { menuSel = i; item.action(); } });
   });
 
   ctx.font = '11px monospace'; ctx.fillStyle = '#333333';
@@ -1858,20 +2255,26 @@ function drawResults() {
   ctx.textAlign = 'left';
 }
 
-function drawGameOver() {
-  ctx.fillStyle = 'rgba(0,0,0,0.80)'; ctx.fillRect(0, 0, CW, CH);
+// Pop-up panel over the level after MAX_CRASHES consecutive crashes
+function drawMissionFailed() {
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, CW, CH);
+  const pw = 440, ph = 270, px = (CW - pw) / 2, py = (CH - ph) / 2 - 10;
+  ctx.fillStyle = 'rgba(0,0,0,0.85)'; ctx.fillRect(px, py, pw, ph);
+  vectorGlow('#FF4040', 10);
+  ctx.strokeStyle = '#FF4040'; ctx.lineWidth = 2; ctx.strokeRect(px, py, pw, ph);
+  vectorGlow(null);
   ctx.textAlign = 'center';
 
-  ctx.font = 'bold 44px monospace'; ctx.fillStyle = '#FF4444';
-  ctx.fillText('GAME OVER', CW / 2, CH / 2 - 80);
+  ctx.font = 'bold 36px monospace'; ctx.fillStyle = '#FF4444';
+  ctx.fillText('MISSION FAILED', CW / 2, CH / 2 - 80);
 
-  ctx.font = '16px monospace'; ctx.fillStyle = '#777777';
-  ctx.fillText('All lives lost', CW / 2, CH / 2 - 42);
+  ctx.font = '15px monospace'; ctx.fillStyle = '#999999';
+  ctx.fillText(`${MAX_CRASHES} crashes in a row on this level`, CW / 2, CH / 2 - 48);
 
   const items = ['TRY AGAIN', 'LEVEL SELECT', 'MAIN MENU'];
   const _goActions = [
     () => { restart(); },
-    () => { gState = 'LEVEL_SELECT'; menuSel = 0; },
+    () => { gState = 'LEVEL_SELECT'; menuSel = level.id - 1; },
     () => { gState = 'MAIN_MENU';    menuSel = 0; },
   ];
   _hitboxes = [];
@@ -1950,13 +2353,13 @@ function drawLevelSelect() {
   ctx.font = '13px monospace'; ctx.fillStyle = '#FFB800';
   ctx.fillText(`★  ${totalSavedStars()} / ${maxStars()}`, CW / 2, 78);
 
-  const cols = 4, cw = 192, ch = 104, gap = 10;
+  const cols = 4, cw = 192, ch = 88, gap = 10;   // one row per planet
   const gx   = (CW - (cols * cw + (cols - 1) * gap)) / 2;
   const gy   = 106;
 
   _hitboxes = [{ x: 0, y: CH - 50, w: CW, h: 50, action: () => { gState = 'MAIN_MENU'; menuSel = 0; } }];
 
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < LEVELS.length; i++) {
     const col = i % cols, row = Math.floor(i / cols);
     const cx  = gx + col * (cw + gap);
     const cy  = gy + row * (ch + gap);
@@ -1976,11 +2379,11 @@ function drawLevelSelect() {
       ctx.textAlign = 'center';
       ctx.font = 'bold 11px monospace';
       ctx.fillStyle = ENV_COL[lev.environment] || '#888888';
-      ctx.fillText(lev.name.toUpperCase(), cx + cw / 2, cy + 42);
+      ctx.fillText(lev.name.toUpperCase(), cx + cw / 2, cy + 38);
 
       const stars = savedStars(lev.id);
       ctx.font = '22px sans-serif'; ctx.fillStyle = '#FFB800';
-      ctx.fillText('★'.repeat(stars) + '☆'.repeat(3 - stars), cx + cw / 2, cy + 80);
+      ctx.fillText('★'.repeat(stars) + '☆'.repeat(3 - stars), cx + cw / 2, cy + 70);
 
       _hitboxes.push({ x: cx, y: cy, w: cw, h: ch, action: () => {
         menuSel = i;
@@ -2170,56 +2573,27 @@ function drawUFO() {
   // Trail  (SPEC-08 §6.2)
   ufo.trail.forEach((pos, i) => {
     const a = (1 - i / ufo.trail.length) * 0.4;
-    const r = 3 - (i / ufo.trail.length) * 2;
-    ctx.beginPath();
-    ctx.arc(pos.x, pos.y, Math.max(0.5, r), 0, Math.PI * 2);
+    const r = 1.5 - (i / ufo.trail.length);
     ctx.fillStyle = `rgba(122,184,255,${a})`;
-    ctx.fill();
+    ctx.fillRect(pos.x - r / 2, pos.y - r / 2, r, r);
   });
 
   ctx.save();
   ctx.translate(ufo.x, ufo.y);
+  ctx.scale(0.5, 0.5);   // drawn at half size to match UFO_W / UFO_H
 
-  // Glow layer  (SPEC-08 §6.1)
-  const glowA = 0.3 + Math.sin(ufo.glowPhase) * 0.15;
-  const grad  = ctx.createRadialGradient(0, 0, 0, 0, 0, 40);
-  grad.addColorStop(0, `rgba(122,184,255,${glowA})`);
-  grad.addColorStop(1, 'rgba(122,184,255,0)');
-  ctx.fillStyle = grad;
+  // Asteroids-style saucer outline; glow pulses (SPEC-08 §6.1)
+  // Collision flash turns it white (SPEC-08 §6.3)
+  const col = ufo.collisionFlash ? '#FFFFFF' : '#7AB8FF';
+  vectorGlow(col, 10 + Math.sin(ufo.glowPhase) * 6);
+  ctx.strokeStyle = col; ctx.lineWidth = 3.2; ctx.lineJoin = 'round';   // 1.6px on screen
   ctx.beginPath();
-  ctx.ellipse(0, 0, 40, 40, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Saucer disc
-  ctx.globalAlpha = 0.85;
-  ctx.fillStyle   = '#C8E8FF';
-  ctx.beginPath();
-  ctx.ellipse(0, 2, 24, 8, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Dome
-  ctx.fillStyle = '#DDEEFF';
-  ctx.beginPath();
-  ctx.ellipse(0, -3, 12, 8, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Underside light strip
-  ctx.fillStyle = `rgba(122,184,255,${0.5 + Math.sin(ufo.glowPhase * 2) * 0.3})`;
-  ctx.beginPath();
-  ctx.ellipse(0, 6, 10, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.globalAlpha = 1.0;
-
-  // Collision flash  (SPEC-08 §6.3)
-  if (ufo.collisionFlash) {
-    ctx.globalAlpha = 0.6;
-    ctx.fillStyle   = '#FFFFFF';
-    ctx.beginPath();
-    ctx.ellipse(0, 2, 26, 9, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1.0;
-  }
+  ctx.moveTo(-24, 2); ctx.lineTo(-10, -4); ctx.lineTo(10, -4); ctx.lineTo(24, 2);
+  ctx.lineTo(10, 9);  ctx.lineTo(-10, 9);  ctx.closePath();
+  ctx.moveTo(-24, 2); ctx.lineTo(24, 2);
+  ctx.moveTo(-10, -4); ctx.lineTo(-6, -11); ctx.lineTo(6, -11); ctx.lineTo(10, -4);
+  ctx.stroke();
+  vectorGlow(null);
 
   ctx.restore();
 }
@@ -2245,9 +2619,10 @@ function drawDebris() {
   for (const d of level.debris) {
     ctx.save();
     ctx.translate(d.x + d.w / 2, d.y + d.h / 2);
-    ctx.fillStyle   = d.colour || '#888888';
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-    ctx.lineWidth   = 1;
+    const col = d.colour || '#888888';
+    vectorGlow(col, 8);
+    ctx.strokeStyle = col;
+    ctx.lineWidth   = 1.6;
     ctx.beginPath();
     const hw = d.w / 2, hh = d.h / 2;
     if (d.type === 'rock') {
@@ -2265,7 +2640,6 @@ function drawDebris() {
       ctx.lineTo( -hw,       hh     );
     }
     ctx.closePath();
-    ctx.fill();
     ctx.stroke();
     ctx.restore();
   }
@@ -2290,6 +2664,9 @@ function loop(t) {
     checkUFOCollision();
     bannerTimer += dt;
   }
+  if (gState === 'FLYING') updateWarnings(dt);
+  else                     shipWarn = null;
+  updateAudio(dt);
 
   if (gState === 'SUCCESS_ANIMATION') updateUFO(dt);  // UFO orbits during Titan animation
 
@@ -2297,9 +2674,9 @@ function loop(t) {
     crashTimer += dt;
     crashAlpha  = Math.max(0, 1 - crashTimer / 1.5);
     if (crashTimer >= 1.5) {
-      lives--;
-      if (lives <= 0) { gState = 'GAMEOVER'; menuSel = 0; }
-      else            { initShip(); gState = 'FLYING'; }
+      crashStreak++;
+      if (crashStreak >= MAX_CRASHES) { gState = 'MISSION_FAILED'; menuSel = 0; }
+      else                            { initShip(true); gState = 'FLYING'; }
     }
   }
 
@@ -2326,10 +2703,11 @@ function loop(t) {
     drawSuccessAnimation(now);
   } else if (gState !== 'MAIN_MENU' && gState !== 'LEVEL_SELECT' && gState !== 'HOW_TO_PLAY') {
     // Normal world render (no camera transform) — skip for full-screen menu states
+    // Particles go first so the terrain's black fill hides anything below ground
+    drawParticles();
     drawTerrain();
     drawPads(now);
     drawDebris();
-    drawParticles();
     drawUFO();
     drawShip();
   }
@@ -2342,7 +2720,7 @@ function loop(t) {
   if (gState === 'CRASHED')      drawCrashMsg();
   if (gState === 'PAUSED')       drawPaused();
   if (gState === 'RESULTS')      { drawTerrain(); drawPads(now); drawDebris(); drawUFO(); drawShip(); drawResults(); }
-  if (gState === 'GAMEOVER')     drawGameOver();
+  if (gState === 'MISSION_FAILED') drawMissionFailed();
   if (gState === 'MAIN_MENU')    drawMainMenu();
   if (gState === 'LEVEL_SELECT') drawLevelSelect();
   if (gState === 'HOW_TO_PLAY')  drawHowToPlay();

@@ -15,6 +15,8 @@ This is a **specification-only project** — no implementation code exists yet. 
 
 Note: SPEC-05 (LivesAndGameOver) and SPEC-11 (HUDandUI) can be wired in alongside step 2.
 
+Lives have been removed (any level can be replayed). Instead, 3 consecutive crashes on the same level shows a MISSION FAILED pop-up (state `MISSION_FAILED`) with Try again / Level select / Main menu.
+
 ## Specifications
 
 The `specs/` directory contains the authoritative design documents:
@@ -39,13 +41,13 @@ The `specs/` directory contains the authoritative design documents:
 - **Rendering:** HTML5 Canvas (900×600px fixed, 60fps via `requestAnimationFrame`)
 - **Storage:** `localStorage` for star ratings and best fuel percentages
 - **Build:** No build step planned (single HTML + JS files, or minimal bundling)
-- **Audio:** Out of scope for v1.0
+- **Audio:** Synthesised with Web Audio in `index.html` (no sample files): thruster, crash, landing, proximity sonar, random radio chatter/static. M toggles mute
 
 ## Architecture (from specs)
 
 ### Game Loop & State Machine
 
-The game uses a discrete state machine with states: `MAIN_MENU`, `LEVEL_SELECT`, `FLYING`, `PAUSED`, `CRASHED`, `RESETTING`, `SUCCESS_ANIMATION`, `RESULTS_SCREEN`, `GAME_OVER`.
+The game uses a discrete state machine with states: `MAIN_MENU`, `LEVEL_SELECT`, `FLYING`, `PAUSED`, `CRASHED`, `RESETTING`, `SUCCESS_ANIMATION`, `RESULTS_SCREEN`, `MISSION_FAILED` (was `GAME_OVER`).
 
 ### Physics Constants
 
@@ -61,7 +63,7 @@ Use a centralised input state object (polled each frame, not event-driven callba
 
 ### Level Structure
 
-12 levels across 4 planets (Levels 1–3 Moon, 4–6 Mars, 7–9 Titan, 10–12 Io). Difficulty ramps via landing pad width (120px → 42px), fuel budget, and hazard presence (wind from L4, debris+UFO from L7). See SPEC-12 for all level parameters.
+16 levels across 4 planets (Levels 1–4 Moon, 5–8 Mars, 9–12 Titan, 13–16 Io). The 4th level of each planet is a cave (sideways flying through a tunnel; uses a `ceiling` polyline). Difficulty ramps via landing pad width (60px → 21px), fuel budget, and hazard presence (wind from L5, debris+UFO from L9). SPEC-12 describes the original 12 levels; `index.html` is now the source of truth for level data.
 
 ### Collision Detection
 
@@ -77,4 +79,5 @@ Only star ratings (1–3), best fuel % per level, and unlock state are saved to 
 - Fixed canvas: 900×600px — no responsive scaling or high-DPI in v1.0
 - Landing requires: vertical speed ≤ threshold, horizontal speed ≤ threshold, angle ≤ ±5°, both legs on pad
 - UFO collision drains 25% of current fuel (not a crash)
-- Lander legspan is 52px — the narrowest pad (42px on Io) is intentionally harder than the lander width
+- Lander legspan is 26px (half the SPEC size) — the narrowest pad (21px on Io) is intentionally harder than the lander width
+- Visual style is vector-arcade: black background, glowing line art, Asteroids-style ship, planet-tinted terrain outlines

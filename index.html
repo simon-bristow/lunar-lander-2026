@@ -1548,6 +1548,21 @@ function sfxRadioChatter() {
 }
 
 // Radio static: a cluster of crackles and a short data blip
+// UFO fuel drain: a warbling tractor-beam tone sliding 900 → 180 Hz,
+// with a hiss of fuel being siphoned away
+function sfxUfoDrain() {
+  if (!audioReady()) return;
+  const t = audioCtx.currentTime;
+  const osc = tone('sine', 900, t, 1.0, 0.18, 180);
+  const lfo = audioCtx.createOscillator();
+  const lfoAmp = audioCtx.createGain();
+  lfo.frequency.value = 16; lfoAmp.gain.value = 60;   // ±60 Hz wobble at 16 Hz
+  lfo.connect(lfoAmp).connect(osc.frequency);
+  lfo.start(t);
+  lfo.stop(t + 1.02);
+  noiseBurst(t, 1.0, 0.08, 'bandpass', 3000, 400, 2);
+}
+
 function sfxRadioStatic() {
   const t = audioCtx.currentTime;
   const n = 4 + Math.floor(Math.random() * 6);
@@ -2552,6 +2567,7 @@ function checkUFOCollision() {
 
   if (rx > ux && lx < urx && by > uty && ty < uby) {
     applyUFOFuelDrain();
+    sfxUfoDrain();
     ufo.collisionFlash   = true;
     ufoCollisionCooldown = UFO_COLLISION_COOLDOWN;
     setTimeout(() => { ufo.collisionFlash = false; }, 300);

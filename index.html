@@ -1450,9 +1450,14 @@ function noiseBurst(t0, dur, gain, type, fStart, fEnd, q = 1) {
   src.stop(t0 + dur + 0.02);
 }
 
-// Called every frame: engine follows the thrust input, radio fires at random
+// Called every frame: menu music on/off, engine follows the thrust input,
+// radio fires at random
 function updateAudio(dt) {
   if (!audioReady()) return;
+  const wantMusic = MUSIC_STATES.includes(gState);
+  if (wantMusic && !music)      startMusic();
+  else if (!wantMusic && music) stopMusic();
+
   const firing = gState === 'FLYING' && inp.thrust && ship.fuel > 0;
   thrustGain.gain.setTargetAtTime(firing ? 0.35 : 0, audioCtx.currentTime, firing ? 0.03 : 0.08);
 
@@ -1572,6 +1577,114 @@ function sfxRadioStatic() {
   if (Math.random() < 0.5) {
     for (let i = 0; i < 4; i++) tone('square', 1800 + Math.random() * 800, t + 0.9 + i * 0.07, 0.05, 0.025);
   }
+}
+
+// ---- Menu music: slow, foreboding space ambient in D minor ----
+// Drone pad + bass pulse + echoing square-wave arpeggio, scheduled ahead of
+// time on the audio clock. The E♭ bars (the Phrygian ♭II) give it the dread.
+const MUSIC_STATES = ['MAIN_MENU', 'LEVEL_SELECT', 'HOW_TO_PLAY'];
+const MUSIC_STEP   = 60 / 72 / 2;   // eighth note at 72 BPM
+const MUSIC_BARS   = [              // root = bass MIDI note, arp = chord tones
+  { root: 38, arp: [62, 65, 69, 72] },   // Dm
+  { root: 34, arp: [58, 62, 65, 69] },   // B♭
+  { root: 38, arp: [62, 65, 69, 72] },   // Dm
+  { root: 39, arp: [63, 67, 70, 74] },   // E♭
+  { root: 38, arp: [62, 65, 69, 72] },   // Dm
+  { root: 34, arp: [58, 62, 65, 69] },   // B♭
+  { root: 39, arp: [63, 67, 70, 74] },   // E♭
+  { root: 33, arp: [57, 61, 64, 67] },   // A7 — pulls back to Dm
+];
+const ARP_PATTERN = [0, 2, 1, 3, 2, -1, 1, -1];   // index into arp, -1 = rest
+const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
+let music = null;   // live nodes + scheduler state while menu music plays
+
+function startMusic() {
+  const t = audioCtx.currentTime;
+  const out = audioCtx.createGain();
+  out.gain.setValueAtTime(0.0001, t);
+  out.gain.linearRampToValueAtTime(1, t + 2.5);
+  out.connect(masterGain);
+
+  // Echo bus: dotted-quarter feedback delay, darkened on each repeat
+  const echo = audioCtx.createDelay(2);
+  echo.delayTime.value = MUSIC_STEP * 3;
+  const damp = audioCtx.createBiquadFilter();
+  damp.type = 'lowpass'; damp.frequency.value = 1800;
+  const fb = audioCtx.createGain();
+  fb.gain.value = 0.4;
+  echo.connect(damp); damp.connect(fb); fb.connect(echo); damp.connect(out);
+
+  // Pad: detuned saws through a resonant low-pass that slowly breathes
+  const padFilter = audioCtx.createBiquadFilter();
+  padFilter.type = 'lowpass'; padFilter.frequency.value = 550; padFilter.Q.value = 3;
+  const lfo = audioCtx.createOscillator();
+  const lfoAmp = audioCtx.createGain();
+  lfo.frequency.value = 0.07; lfoAmp.gain.value = 300;
+  lfo.connect(lfoAmp).connect(padFilter.frequency);
+  lfo.start(t);
+  const padAmp = audioCtx.createGain();
+  padAmp.gain.value = 0.045;
+  padFilter.connect(padAmp).connect(out);
+  const pads = [-7, 7, 0].map(detune => {
+    const o = audioCtx.createOscillator();
+    o.type = 'sawtooth'; o.detune.value = detune;
+    o.connect(padFilter);
+    o.start(t);
+    return o;
+  });
+
+  music = { out, echo, pads, lfo, step: 0, next: t + 0.1 };
+  music.timer = setInterval(scheduleMusic, 200);
+  scheduleMusic();
+}
+
+// One synth note into the music bus (optionally also into the echo)
+function musicNote(type, freq, t0, dur, gain, attack, cutoff, toEcho) {
+  const osc = audioCtx.createOscillator();
+  const lp  = audioCtx.createBiquadFilter();
+  const amp = audioCtx.createGain();
+  osc.type = type; osc.frequency.value = freq;
+  lp.type = 'lowpass'; lp.frequency.value = cutoff;
+  amp.gain.setValueAtTime(0.0001, t0);
+  amp.gain.linearRampToValueAtTime(gain, t0 + attack);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(lp).connect(amp).connect(music.out);
+  if (toEcho) amp.connect(music.echo);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.05);
+}
+
+// Schedule every eighth note that falls within the next 1.2 s
+function scheduleMusic() {
+  if (!music) return;
+  while (music.next < audioCtx.currentTime + 1.2) {
+    const bar = MUSIC_BARS[Math.floor(music.step / 8) % MUSIC_BARS.length];
+    const s = music.step % 8, t = music.next;
+    if (s === 0) {
+      const padNotes = [bar.root + 12, bar.root + 12, bar.root + 19];
+      music.pads.forEach((o, i) => o.frequency.setTargetAtTime(midiHz(padNotes[i]), t, 0.3));
+      if (Math.random() < 0.35) {   // distant high "star" ping
+        const n = bar.arp[Math.floor(Math.random() * 4)] + 24;
+        musicNote('sine', midiHz(n), t + MUSIC_STEP * (2 + Math.floor(Math.random() * 4)), 1.5, 0.02, 0.01, 8000, true);
+      }
+    }
+    if (s === 0 || s === 4) musicNote('triangle', midiHz(bar.root), t, MUSIC_STEP * 3.5, 0.18, 0.06, 400, false);
+    const idx = ARP_PATTERN[s];
+    if (idx >= 0) musicNote('square', midiHz(bar.arp[idx]), t, 0.6, 0.035, 0.01, 1400, true);
+    music.next += MUSIC_STEP;
+    music.step++;
+  }
+}
+
+function stopMusic() {
+  const m = music;
+  music = null;
+  clearInterval(m.timer);
+  const t = audioCtx.currentTime;
+  m.out.gain.cancelScheduledValues(t);
+  m.out.gain.setValueAtTime(m.out.gain.value, t);
+  m.out.gain.setTargetAtTime(0, t, 0.4);
+  setTimeout(() => { m.pads.forEach(o => o.stop()); m.lfo.stop(); m.out.disconnect(); }, 2500);
 }
 
 // ================================================================
